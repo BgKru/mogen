@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+markers = [
+    "unit: fast, isolated tests with no external infrastructure",
+    "api: HTTP API contract tests",
+    "integration: tests that require real infrastructure such as PostgreSQL",
+    "ml: tests that exercise ML pipelines",
+    "gpu: tests that require a CUDA-capable device",
+    "slow: tests that take a long time to execute",
+    "e2e: end-to-end browser tests",
+]

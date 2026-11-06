@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------
+# Secrets and local environment
+# Never commit real credentials. See docs/specifications/08_infrastructure.md.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ---------------------------------------------------------------------------
+# Python backend
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+/build/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+playwright-report/
+test-results/
+blob-report/
+
+# ---------------------------------------------------------------------------
+# Application storage
+# Source photographs, working files and generated models are runtime data.
+# They live in the app_data volume and must never enter the repository.
+# The local bind-mount paths are ignored here as well.
+# ---------------------------------------------------------------------------
+/data/
+/storage/
+/volumes/
+/artifacts/
+
+# ---------------------------------------------------------------------------
+# ML model weights and datasets
+# Weights are downloaded or mounted separately from application code.
+# ---------------------------------------------------------------------------
+/models/
+/checkpoints/
+/weights/
+/datasets/
+.cache/
+*.ckpt
+*.pth
+*.pt
+*.safetensors
+*.onnx
+*.engine
+*.trt
+
+# ---------------------------------------------------------------------------
+# Temporary processing artifacts
+# Generated GLB, glTF and mesh outputs are validated and delivered through
+# application storage, not through source control. Test fixtures remain
+# committable because the ignore rules are directory-scoped.
+# ---------------------------------------------------------------------------
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+*.pid
+*.swp
+
+# ---------------------------------------------------------------------------
+# Tooling and editors
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

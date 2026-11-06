@@ -1,0 +1,394 @@
+# ---------------------------------------------------------------------------
+# 3D generation web application - Docker Compose
+#
+# See docs/specifications/08_infrastructure.md, Section 5.
+#
+# Validate:  docker compose config
+# Start:     docker compose up -d --build
+# ---------------------------------------------------------------------------
+
+name: mogen
+
+x-backend-build: &backend-build
+  context: ./backend
+  target: development
+
+services:
+  db:
+    # PostgreSQL 17.11, verified in Phase 1. Digest pin: update deliberately.
+    image: postgres:17@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - internal
+
+  redis:
+    # Redis 7.4.12, verified in Phase 1. Digest pin: update deliberately.
+    image: redis:7.4-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    networks:
+      - internal
+
+  migration:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+
+  api:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      STORAGE_ROOT: ${STORAGE_ROOT:-/data}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+      CSRF_SECRET: ${CSRF_SECRET:-dev-only-csrf-secret-change-before-production}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}
+      PASSWORD_MAX_LENGTH: ${PASSWORD_MAX_LENGTH:-128}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-20}
+      MAX_IMAGE_DIMENSION: ${MAX_IMAGE_DIMENSION:-8192}
+      MIN_SCENE_IMAGES: ${MIN_SCENE_IMAGES:-3}
+      MAX_SCENE_IMAGES: ${MAX_SCENE_IMAGES:-100}
+      MAX_PAGE_SIZE: ${MAX_PAGE_SIZE:-100}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    volumes:
+      - app_data:/data
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - internal
+
+  cleanup-worker:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: unless-stopped
+    # The beat scheduler lives in this container for development. Production
+    # separates beat from the worker (08_infrastructure.md Section 7).
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - worker
+      - -Q
+      - file_cleanup
+      - --concurrency=${CLEANUP_WORKER_CONCURRENCY:-2}
+      - --prefetch-multiplier=1
+      - --beat
+      - --schedule=/tmp/celerybeat-schedule
+      - --loglevel=${LOG_LEVEL:-INFO}
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_TASK_IGNORE_RESULT: ${CELERY_TASK_IGNORE_RESULT:-true}
+      STORAGE_ROOT: ${STORAGE_ROOT:-/data}
+      CLEANUP_BATCH_SIZE: ${CLEANUP_BATCH_SIZE:-20}
+      CLEANUP_POLL_INTERVAL_SECONDS: ${CLEANUP_POLL_INTERVAL_SECONDS:-15}
+      CLEANUP_MAX_ATTEMPTS: ${CLEANUP_MAX_ATTEMPTS:-3}
+      CLEANUP_TASK_TIME_LIMIT_SECONDS: ${CLEANUP_TASK_TIME_LIMIT_SECONDS:-600}
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      # A running process is not enough: the worker must answer on its queue.
+      # CMD-SHELL is required so the container hostname can expand.
+      test:
+        - CMD-SHELL
+        - >-
+          celery -A app.tasks.celery_app:celery_app inspect ping
+          -d celery@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
+    networks:
+      - internal
+
+  object-worker:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: unless-stopped
+    # Phase 4 worker environment only: it claims and tracks tasks. The TripoSR
+    # pipeline and its GPU image arrive in Phase 5 (08 Sections 3.5 and 4.3).
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - worker
+      - -Q
+      - object_generation
+      - --concurrency=${OBJECT_WORKER_CONCURRENCY:-1}
+      - --prefetch-multiplier=1
+      - --loglevel=${LOG_LEVEL:-INFO}
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WORKER_SERVICE_NAME: object-worker
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_TASK_IGNORE_RESULT: ${CELERY_TASK_IGNORE_RESULT:-true}
+      STORAGE_ROOT: ${STORAGE_ROOT:-/data}
+      TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-300}
+      TASK_HEARTBEAT_SECONDS: ${TASK_HEARTBEAT_SECONDS:-30}
+      OBJECT_TASK_TIME_LIMIT_SECONDS: ${OBJECT_TASK_TIME_LIMIT_SECONDS:-3600}
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          celery -A app.tasks.celery_app:celery_app inspect ping
+          -d celery@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
+    networks:
+      - internal
+
+  scene-worker:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: unless-stopped
+    # Phase 4 worker environment only: the COLMAP/OpenMVS image is Phase 6
+    # (08 Sections 3.6 and 4.4).
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - worker
+      - -Q
+      - scene_reconstruction
+      - --concurrency=${SCENE_WORKER_CONCURRENCY:-1}
+      - --prefetch-multiplier=1
+      - --loglevel=${LOG_LEVEL:-INFO}
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WORKER_SERVICE_NAME: scene-worker
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_TASK_IGNORE_RESULT: ${CELERY_TASK_IGNORE_RESULT:-true}
+      STORAGE_ROOT: ${STORAGE_ROOT:-/data}
+      TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-300}
+      TASK_HEARTBEAT_SECONDS: ${TASK_HEARTBEAT_SECONDS:-30}
+      SCENE_TASK_TIME_LIMIT_SECONDS: ${SCENE_TASK_TIME_LIMIT_SECONDS:-7200}
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          celery -A app.tasks.celery_app:celery_app inspect ping
+          -d celery@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
+    networks:
+      - internal
+
+  outbox-dispatcher:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: unless-stopped
+    # Independent process: it never serves HTTP and never publishes Redis
+    # state as the source of truth (08 Sections 3.9 and 7.6).
+    command: ["python", "-m", "app.tasks.outbox_dispatcher"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_TASK_IGNORE_RESULT: ${CELERY_TASK_IGNORE_RESULT:-true}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      OUTBOX_POLL_INTERVAL_SECONDS: ${OUTBOX_POLL_INTERVAL_SECONDS:-2}
+      OUTBOX_RETRY_BASE_SECONDS: ${OUTBOX_RETRY_BASE_SECONDS:-2}
+      OUTBOX_RETRY_MAX_SECONDS: ${OUTBOX_RETRY_MAX_SECONDS:-300}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-10}
+      OUTBOX_LOCK_TIMEOUT_SECONDS: ${OUTBOX_LOCK_TIMEOUT_SECONDS:-60}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      # Proves the poll loop completed a recent cycle, not merely that a
+      # process exists; the loop writes the file after every attempt.
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, sys, time;
+          path = '/tmp/outbox-dispatcher.heartbeat';
+          sys.exit(0 if os.path.exists(path)
+          and time.time() - os.path.getmtime(path) < 120 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - internal
+
+  task-recovery:
+    build: *backend-build
+    image: mogen-api:dev
+    restart: unless-stopped
+    # Independent recovery process; it creates outbox events and never
+    # publishes to Redis itself (08 Sections 3.10 and 9).
+    command: ["python", "-m", "app.tasks.task_recovery"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-300}
+      TASK_HEARTBEAT_SECONDS: ${TASK_HEARTBEAT_SECONDS:-30}
+      TASK_STALE_THRESHOLD_SECONDS: ${TASK_STALE_THRESHOLD_SECONDS:-900}
+      DISPATCH_STALL_TIMEOUT_SECONDS: ${DISPATCH_STALL_TIMEOUT_SECONDS:-900}
+      TASK_RECOVERY_MAX_ATTEMPTS: ${TASK_RECOVERY_MAX_ATTEMPTS:-3}
+      RECOVERY_BATCH_SIZE: ${RECOVERY_BATCH_SIZE:-50}
+      RECOVERY_POLL_INTERVAL_SECONDS: ${RECOVERY_POLL_INTERVAL_SECONDS:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, sys, time;
+          path = '/tmp/task-recovery.heartbeat';
+          sys.exit(0 if os.path.exists(path)
+          and time.time() - os.path.getmtime(path) < 120 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    image: mogen-frontend:dev
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+      # Inside the network the API is reached by service name, not localhost.
+      VITE_API_PROXY_TARGET: ${VITE_API_PROXY_TARGET:-http://api:8000}
+      VITE_TASK_POLL_INTERVAL: ${VITE_TASK_POLL_INTERVAL:-3000}
+      VITE_MAX_UPLOAD_SIZE_MB: ${VITE_MAX_UPLOAD_SIZE_MB:-20}
+      VITE_MIN_SCENE_IMAGES: ${VITE_MIN_SCENE_IMAGES:-3}
+      VITE_MAX_SCENE_IMAGES: ${VITE_MAX_SCENE_IMAGES:-100}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_data:
+  # Declared ahead of use. Compose omits named volumes that no service mounts
+  # yet, so this appears in `docker compose config` once the workers exist.
+  triposr_model_cache:
+
+networks:
+  internal:
+    driver: bridge
