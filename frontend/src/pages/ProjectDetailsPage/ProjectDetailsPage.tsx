@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { useToast } from "../../app/providers/toast-context";
 import { ROUTES } from "../../app/router/routes";
+import { GenerationPanel } from "../../features/generation/components/GenerationPanel";
+import { useProjectProcessingStatus } from "../../features/generation/hooks/useGeneration";
 import { projectImageContentUrl } from "../../features/image-upload/api/imagesApi";
 import { ImageDropzone } from "../../features/image-upload/components/ImageDropzone";
 import { useImageSelection } from "../../features/image-upload/hooks/useImageSelection";
@@ -13,6 +16,7 @@ import {
 } from "../../features/image-upload/hooks/useProjectImages";
 import { useDeleteProject, useProject } from "../../features/projects/hooks/useProjects";
 import { toApiError, userMessageFor } from "../../shared/api/errors";
+import { queryKeys } from "../../shared/api/queryKeys";
 import { Alert } from "../../shared/components/Alert";
 import { Button } from "../../shared/components/Button";
 import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
@@ -21,7 +25,6 @@ import { ProjectStatusBadge, ProjectTypeBadge } from "../../shared/components/Pr
 import { Spinner } from "../../shared/components/Spinner";
 import { appConfig } from "../../shared/config";
 import { formatDate, formatFileSize, pluralizeImages } from "../../shared/lib/format";
-import { PROJECT_TYPE_DESCRIPTIONS, PROJECT_TYPE_LABELS } from "../../shared/lib/labels";
 import { isUuid } from "../../shared/lib/uuid";
 import type { ProjectImage } from "../../shared/types/api";
 
@@ -42,7 +45,9 @@ export function ProjectDetailsPage() {
   const location = useLocation();
   const { notify } = useToast();
   const validId = isUuid(projectId);
+  const queryClient = useQueryClient();
   const projectQuery = useProject(validId ? projectId : undefined);
+  const processingQuery = useProjectProcessingStatus(validId ? projectId : undefined);
   const imagesQuery = useProjectImages(validId ? projectId : undefined);
   const deleteProjectMutation = useDeleteProject();
   const deleteImageMutation = useDeleteProjectImage(projectId ?? "");
@@ -74,6 +79,16 @@ export function ProjectDetailsPage() {
   const [uploadState, setUploadState] = useState<UploadState | null>(null);
   const [dismissedFailures, setDismissedFailures] = useState(false);
   const uploadFailures = (location.state as LocationState | null)?.uploadFailures ?? [];
+
+  // The generation panel polls the persisted status while a task is active;
+  // once a terminal state arrives the project and image queries are refreshed.
+  const handleStatusSettled = useCallback(() => {
+    if (!validId) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: queryKeys.project(projectId as string) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+  }, [projectId, queryClient, validId]);
 
   useEffect(() => {
     clearSelection();
@@ -118,11 +133,14 @@ export function ProjectDetailsPage() {
     );
   }
 
+  const liveStatus = processingQuery.data;
+  const effectiveProjectStatus = liveStatus?.projectStatus ?? project.status;
+  const activeTaskStatus = liveStatus?.latestTask?.status ?? project.latestTask?.status;
   const isProcessing =
-    project.status === "PENDING" ||
-    project.status === "PROCESSING" ||
-    project.latestTask?.status === "PENDING" ||
-    project.latestTask?.status === "PROCESSING";
+    effectiveProjectStatus === "PENDING" ||
+    effectiveProjectStatus === "PROCESSING" ||
+    activeTaskStatus === "PENDING" ||
+    activeTaskStatus === "PROCESSING";
   const canModify = !isProcessing;
   const canAddImages = canModify && remainingSlots > 0;
 
@@ -212,9 +230,19 @@ export function ProjectDetailsPage() {
             </span>
           </div>
         </div>
-        <Button variant="danger" onClick={() => setProjectToDelete(true)}>
-          Удалить проект
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {project.resultAvailable ? (
+            <Link
+              to={ROUTES.projectResult(project.id)}
+              className="inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              Просмотреть 3D-модель
+            </Link>
+          ) : null}
+          <Button variant="danger" onClick={() => setProjectToDelete(true)}>
+            Удалить проект
+          </Button>
+        </div>
       </div>
 
       {uploadFailures.length > 0 && !dismissedFailures ? (
@@ -410,41 +438,11 @@ export function ProjectDetailsPage() {
           ) : null}
         </section>
 
-        <section className="h-fit rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-lg font-semibold text-text-primary">Генерация</h2>
-          <p className="mt-1 text-sm text-text-secondary">
-            {PROJECT_TYPE_DESCRIPTIONS[project.type]}
-          </p>
-          <dl className="mt-4 space-y-2 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-text-secondary">Режим</dt>
-              <dd className="text-right font-medium text-text-primary">
-                {PROJECT_TYPE_LABELS[project.type]}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-text-secondary">Исходных изображений</dt>
-              <dd className="text-right font-medium text-text-primary">{images.length}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-text-secondary">Результат</dt>
-              <dd
-                className={`text-right font-medium ${
-                  project.resultAvailable ? "text-success" : "text-text-secondary"
-                }`}
-              >
-                {project.resultAvailable ? "Доступен" : "Ещё не создан"}
-              </dd>
-            </div>
-          </dl>
-          <Button className="mt-5 w-full" disabled>
-            {isObject ? "Создать 3D-модель" : "Реконструировать сцену"}
-          </Button>
-          <p className="mt-3 text-xs text-text-secondary">
-            Генерация станет доступна в следующем обновлении. Сейчас можно подготовить проект и
-            исходные изображения.
-          </p>
-        </section>
+        <GenerationPanel
+          project={project}
+          imageCount={images.length}
+          onStatusSettled={handleStatusSettled}
+        />
       </div>
 
       <ConfirmDialog

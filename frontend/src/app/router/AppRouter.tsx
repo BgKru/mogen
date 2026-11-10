@@ -5,6 +5,7 @@ import { CreateProjectPage } from "../../pages/CreateProjectPage/CreateProjectPa
 import { DashboardPage } from "../../pages/DashboardPage/DashboardPage";
 import { LandingPage } from "../../pages/LandingPage/LandingPage";
 import { LoginPage } from "../../pages/LoginPage/LoginPage";
+import { ModelViewerPage } from "../../pages/ModelViewerPage/ModelViewerPage";
 import { NotFoundPage } from "../../pages/NotFoundPage/NotFoundPage";
 import { ProjectDetailsPage } from "../../pages/ProjectDetailsPage/ProjectDetailsPage";
 import { RegisterPage } from "../../pages/RegisterPage/RegisterPage";
@@ -24,6 +25,7 @@ export function AppRouter() {
             <Route path={ROUTES.dashboard} element={<DashboardPage />} />
             <Route path={ROUTES.createProject} element={<CreateProjectPage />} />
             <Route path={ROUTES.projectDetails(":projectId")} element={<ProjectDetailsPage />} />
+            <Route path={ROUTES.projectResult(":projectId")} element={<ModelViewerPage />} />
           </Route>
         </Route>
         <Route path="*" element={<NotFoundPage />} />

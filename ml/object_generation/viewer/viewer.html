@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 5 GLB proof</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: radial-gradient(circle at 50% 35%, #2a3442 0%, #11151c 70%);
+        overflow: hidden;
+        font-family: system-ui, sans-serif;
+        color: #e8edf4;
+      }
+      #hud {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        font-size: 12px;
+        opacity: 0.75;
+      }
+      #status {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./node_modules/three/build/three.module.js",
+          "three/addons/": "./node_modules/three/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="status">Loading GLB…</div>
+    <div id="hud"></div>
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      const params = new URLSearchParams(location.search);
+      const modelUrl = params.get("model") || "/model.glb";
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 2.2));
+      const key = new THREE.DirectionalLight(0xffffff, 2.4);
+      key.position.set(3, 4, 5);
+      scene.add(key);
+      const rim = new THREE.DirectionalLight(0x88bbff, 1.2);
+      rim.position.set(-4, 2, -3);
+      scene.add(rim);
+
+      const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.01, 100);
+      camera.position.set(1.6, 1.2, 1.9);
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+
+      renderer.setAnimationLoop(() => {
+        controls.update();
+        renderer.render(scene, camera);
+      });
+
+      new GLTFLoader().load(
+        modelUrl,
+        (gltf) => {
+          scene.add(gltf.scene);
+          const box = new THREE.Box3().setFromObject(gltf.scene);
+          const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
+          gltf.scene.position.sub(center);
+          const radius = Math.max(size.length() / 2, 0.001);
+          camera.position.set(radius * 1.5, radius * 0.9, radius * 1.8);
+          camera.near = radius / 100;
+          camera.far = radius * 100;
+          camera.updateProjectionMatrix();
+          controls.target.set(0, 0, 0);
+          controls.update();
+
+          let meshes = 0;
+          let vertices = 0;
+          let colored = 0;
+          gltf.scene.traverse((object) => {
+            if (!object.isMesh) return;
+            meshes += 1;
+            vertices += object.geometry.getAttribute("position")?.count ?? 0;
+            if (object.geometry.getAttribute("color")) colored += 1;
+          });
+          document.getElementById("hud").textContent =
+            `meshes ${meshes} · vertices ${vertices} · COLOR_0 ${colored}`;
+          document.getElementById("status").remove();
+          document.title = "READY";
+        },
+        undefined,
+        (error) => {
+          document.getElementById("status").textContent = `Failed: ${error}`;
+          document.title = "FAILED";
+        },
+      );
+    </script>
+  </body>
+</html>

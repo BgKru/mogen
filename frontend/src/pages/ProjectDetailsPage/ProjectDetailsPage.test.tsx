@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   useProjectImages: vi.fn(),
   useUploadProjectImage: vi.fn(),
   useDeleteProjectImage: vi.fn(),
+  useProjectProcessingStatus: vi.fn(),
+  useStartGeneration: vi.fn(),
 }));
 
 vi.mock("../../features/projects/hooks/useProjects", () => ({
@@ -24,6 +26,11 @@ vi.mock("../../features/image-upload/hooks/useProjectImages", () => ({
   useProjectImages: mocks.useProjectImages,
   useUploadProjectImage: mocks.useUploadProjectImage,
   useDeleteProjectImage: mocks.useDeleteProjectImage,
+}));
+
+vi.mock("../../features/generation/hooks/useGeneration", () => ({
+  useProjectProcessingStatus: mocks.useProjectProcessingStatus,
+  useStartGeneration: mocks.useStartGeneration,
 }));
 
 vi.mock("../../features/image-upload/api/imagesApi", () => ({
@@ -101,6 +108,17 @@ describe("ProjectDetailsPage", () => {
     mocks.useDeleteProject.mockReturnValue({ mutate: deleteProjectMutate, isPending: false });
     mocks.useDeleteProjectImage.mockReturnValue({ mutate: deleteImageMutate, isPending: false });
     mocks.useUploadProjectImage.mockReturnValue({ mutateAsync: uploadMutate, isPending: false });
+    mocks.useProjectProcessingStatus.mockReturnValue({
+      data: undefined,
+      isError: false,
+      error: null,
+    });
+    mocks.useStartGeneration.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
   });
 
   it("renders project metadata, images and a disabled generation placeholder", () => {
@@ -134,6 +152,33 @@ describe("ProjectDetailsPage", () => {
 
     expect(screen.getByText("Загрузить фотографию")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Создать 3D-модель" })).toBeDisabled();
+  });
+
+  it("links to the 3D viewer when a result is available", () => {
+    mocks.useProject.mockReturnValue({
+      data: {
+        ...project,
+        status: "COMPLETED",
+        resultAvailable: true,
+        currentResult: {
+          id: "33333333-3333-4333-8333-333333333333",
+          format: "GLB",
+          fileSizeBytes: 1024,
+          createdAt: "2026-11-05T12:05:00Z",
+        },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderDetails();
+
+    expect(screen.getByRole("link", { name: "Просмотреть 3D-модель" })).toHaveAttribute(
+      "href",
+      `/projects/${project.id}/result`,
+    );
   });
 
   it("deletes the project after confirmation and returns to the dashboard", () => {

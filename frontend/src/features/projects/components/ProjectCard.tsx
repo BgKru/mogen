@@ -39,14 +39,25 @@ export function ProjectCard({ project, onDelete }: ProjectCardProps) {
         >
           {project.resultAvailable ? "3D-результат доступен" : "Результат не создан"}
         </span>
-        <button
-          type="button"
-          onClick={() => onDelete(project)}
-          className="rounded-md px-2 py-1 text-xs font-medium text-error transition hover:bg-error/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-error"
-          aria-label={`Удалить проект ${project.name}`}
-        >
-          Удалить
-        </button>
+        <div className="flex items-center gap-2">
+          {project.resultAvailable ? (
+            <Link
+              to={ROUTES.projectResult(project.id)}
+              className="rounded-md px-2 py-1 text-xs font-medium text-accent transition hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              aria-label={`Смотреть 3D-модель проекта ${project.name}`}
+            >
+              Смотреть 3D
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onDelete(project)}
+            className="rounded-md px-2 py-1 text-xs font-medium text-error transition hover:bg-error/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-error"
+            aria-label={`Удалить проект ${project.name}`}
+          >
+            Удалить
+          </button>
+        </div>
       </div>
     </article>
   );

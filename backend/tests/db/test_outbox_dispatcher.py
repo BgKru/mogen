@@ -311,3 +311,65 @@ def test_the_claim_is_committed_before_publishing(
     assert publisher.attempts == 1
     # ``FOR UPDATE NOWAIT`` succeeds, so no row lock is held during publishing.
     assert publisher.lock_error is None
+
+
+class _CrashAfterPublishPublisher:
+    """Publishes one message, then dies before the row can be marked PUBLISHED."""
+
+    def __init__(self) -> None:
+        self.published: list[uuid.UUID] = []
+
+    def publish(self, message: OutboxMessage) -> None:
+        self.published.append(message.id)
+        raise SystemExit("simulated dispatcher process death after publishing")
+
+
+def test_a_crash_after_publishing_redelivers_and_keeps_the_message_recoverable(
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    dispatcher_settings: Settings,
+) -> None:
+    """At-least-once delivery: a lost acknowledgement means a duplicate, not a loss.
+
+    Traceability: TEST-AC-08, INF-AC-24, roadmap 8.4/8.8. The claim was already
+    committed, so the message stays ``PROCESSING``; the expired lock is released
+    later and the identical message is published again. The worker's atomic
+    claim makes the duplicate harmless.
+    """
+    message = _add_message(db_session)
+    crashed = _CrashAfterPublishPublisher()
+    published_at = datetime.now(UTC)
+
+    with pytest.raises(SystemExit):
+        _dispatch(session_factory, dispatcher_settings, crashed, now=published_at)
+
+    assert crashed.published == [message.id]
+    stuck = _reload(session_factory, message.id)
+    assert stuck.status == "PROCESSING"
+    assert stuck.locked_by == "dispatcher-test"
+    assert stuck.published_at is None
+
+    # A live dispatcher leaves the lock alone until its timeout expires.
+    while_locked = _dispatch(
+        session_factory,
+        dispatcher_settings,
+        RecordingPublisher(),
+        now=published_at + timedelta(seconds=dispatcher_settings.outbox_lock_timeout_seconds - 5),
+    )
+    assert while_locked.claimed == 0
+
+    publisher = RecordingPublisher()
+    recovered = _dispatch(
+        session_factory,
+        dispatcher_settings,
+        publisher,
+        now=published_at + timedelta(seconds=dispatcher_settings.outbox_lock_timeout_seconds + 5),
+    )
+
+    assert recovered.expired_locks == 1
+    assert recovered.published == 1
+    assert publisher.published == [message.id]
+    reloaded = _reload(session_factory, message.id)
+    assert reloaded.status == "PUBLISHED"
+    assert reloaded.attempts == 2
+    assert reloaded.locked_at is None

@@ -33,6 +33,7 @@ from app.services.auth_service import AuthContext, AuthService
 from app.services.generation_service import GenerationService
 from app.services.image_service import ImageService
 from app.services.project_service import ProjectService
+from app.services.result_service import ResultService
 from app.storage import LocalStorage, StorageBackend
 
 
@@ -136,6 +137,14 @@ def get_generation_service(
 ) -> GenerationService:
     """Provide the generation service bound to the request session."""
     return GenerationService(db, settings)
+
+
+def get_result_service(
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage)],
+) -> ResultService:
+    """Provide the current-result service bound to the request session."""
+    return ResultService(db, storage)
 
 
 def get_current_auth(

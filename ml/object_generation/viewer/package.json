@@ -1,0 +1,11 @@
+{
+  "name": "mogen-phase5-glb-proof",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Development-only Three.js/glTF validator proof for the Phase 5 GLB (not part of the application).",
+  "type": "module",
+  "dependencies": {
+    "three": "0.181.0",
+    "gltf-validator": "2.0.0-dev.3.10"
+  }
+}

@@ -58,6 +58,45 @@ export interface ProjectImagePage {
   totalCount: number;
 }
 
+/** Persisted generation task fields shared by the start and status responses. */
+export interface GenerationTaskSummary {
+  id: string;
+  taskType: ProjectType;
+  status: string;
+  stage: string | null;
+  progressPercent: number | null;
+  statusMessage: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface GenerationTask extends GenerationTaskSummary {
+  projectId: string;
+}
+
+/** The persisted project/task state returned by `GET /status`. */
+export interface ProjectProcessingStatus {
+  projectId: string;
+  projectStatus: ProjectStatus;
+  resultAvailable: boolean;
+  latestTask: GenerationTaskSummary | null;
+}
+
+export interface GenerationResult {
+  id: string;
+  projectId: string;
+  taskId: string;
+  format: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  metadata: Record<string, unknown>;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   type: ProjectType;

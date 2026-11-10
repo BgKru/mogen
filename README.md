@@ -11,22 +11,22 @@ Generated assets are delivered as GLB and visualized in the browser.
 
 ## Project status
 
-Phase 0 (specification consolidation), Phase 1 (infrastructure foundation), Phase 2 (database and backend foundation) and Phase 3 (frontend application and backend integration) are complete. Phase 4 (background processing infrastructure) is next.
+Phases 0–8 are complete: specification consolidation, infrastructure, database/backend foundation, frontend integration, background processing, TripoSR object generation, COLMAP/OpenMVS scene reconstruction, the unified 3D viewer with result management, and the Phase 8 reliability, security and optimization work (verification suites, superseded-result cleanup, scene-workspace retention, performance baseline and backup/restore procedures). Phase 9 (comprehensive testing and quality assurance) is next.
 
 | Component | Status |
 |---|---|
 | PostgreSQL 17.11 service | Running and healthy |
 | Redis 7.4.12 service | Running and healthy |
-| Backend API (FastAPI) | Implemented: authentication, projects, image upload/content/deletion, health endpoints, cleanup jobs |
+| Backend API (FastAPI) | Implemented: authentication, projects, image upload/content/deletion, generation start/status, result/download, health endpoints |
 | Migration service | Implemented: applies Alembic migrations before the API starts |
-| Frontend (React + Vite) | Implemented: auth, dashboard, project creation, image upload, project details, tests |
+| Frontend (React + Vite) | Implemented: auth, dashboard, project creation, image upload, project details, object generation and scene reconstruction panels |
 | Cleanup worker | Implemented: Celery `file_cleanup` worker executing queued storage cleanup jobs |
-| Generation workers and dispatcher | Not implemented (Phase 4) |
-| 3D viewer and result download | Not implemented (later phases) |
+| Object worker | Implemented: real TripoSR inference in the dedicated `mogen-object-worker:dev` image |
+| Scene worker | Implemented: real COLMAP 4.2.1 + OpenMVS 2.4.0 reconstruction in the dedicated `mogen-scene-worker:dev` image |
+| Outbox dispatcher and task recovery | Implemented as independent processes with heartbeat health checks |
+| 3D viewer and result-management UI | Implemented: unified React Three Fiber viewer, authorized GLB loading, camera controls, model information, download and result states |
 
-The Compose file defines the data services, the migration service, the API, the frontend and the cleanup worker. Generation workers and the outbox dispatcher are added with Phase 4.
-
-Verified on the reference machine: Compose validation and image builds; PostgreSQL, Redis and API health checks; PostgreSQL data survival across container recreation; Redis AOF survival across a restart; readiness returning 503 while PostgreSQL is down and recovering afterwards; Redis isolation, where a broker outage degrades the dependency report but keeps readiness healthy; structured JSON logs with redacted credentials; the API running as an unprivileged user with a writable storage volume; the frontend served on port 5173 and proxying `/api` to the API; 339 passing backend tests; 84 passing frontend tests; and frontend lint, type check, formatting and production build passing.
+Phase 7 added the unified 3D result viewer and dedicated result workspace: authorized GLB retrieval through the existing download endpoint, React Three Fiber rendering, OrbitControls, model information, download and explicit empty/error/previous-result states. Phase 8 added the reliability and security verification, superseded-result cleanup, scene-workspace retention, the performance baseline and the backup/restore procedures. The verified baseline is **509 backend**, **130 frontend** and **75 scene ML / 35 object ML** tests, with the real TripoSR object and COLMAP/OpenMVS scene loaded and inspected in Edge; see [`docs/reviews/phase7_closeout.md`](docs/reviews/phase7_closeout.md) and [`docs/reviews/phase8_closeout.md`](docs/reviews/phase8_closeout.md).
 
 ## Technology stack
 
@@ -125,5 +125,7 @@ mogen/
 | [`docs/specifications/`](docs/specifications/) | Product, UI, frontend, backend, database, ML, infrastructure and testing specifications |
 | [`docs/specifications/10_development_roadmap.md`](docs/specifications/10_development_roadmap.md) | Implementation order and milestones |
 | [`docs/architecture/`](docs/architecture/) | System architecture, API contracts, data flows, Phase 0 decisions |
+| [`docs/operations/backup_restore.md`](docs/operations/backup_restore.md) | Backup, restoration and post-restore consistency verification |
+| [`docs/reviews/`](docs/reviews/) | Phase close-out reviews with task-by-task and criterion-by-criterion evidence |
 
 The specifications are the source of truth. Where this file and a specification disagree, the specification governs.

@@ -62,6 +62,40 @@ class TaskRepository(BaseRepository[GenerationTask]):
             )
         )
 
+    def get_for_update(self, task_id: uuid.UUID) -> GenerationTask | None:
+        """Return a task with a row lock for an atomic terminal transition.
+
+        The result registration locks the task row so a duplicate delivery
+        cannot insert two results or complete an already terminal task
+        (06_object_generation.md Sections 13.4-13.5).
+
+        ``populate_existing`` is required, not cosmetic: the worker's session
+        already holds the instance returned by the claim, and a cancellation
+        request written by the API after that claim would otherwise be masked by
+        the identity map, letting a deleted project's result register as
+        completed (roadmap 8.3/8.8).
+        """
+        statement = (
+            select(GenerationTask)
+            .where(GenerationTask.id == task_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return self.session.scalar(statement)
+
+    def get_refreshed(self, task_id: uuid.UUID) -> GenerationTask | None:
+        """Return the current database state of a task, bypassing the identity map.
+
+        Terminal transitions that inspect ``cancel_requested_at`` must not read
+        the copy loaded at claim time (roadmap 8.8).
+        """
+        statement = (
+            select(GenerationTask)
+            .where(GenerationTask.id == task_id)
+            .execution_options(populate_existing=True)
+        )
+        return self.session.scalar(statement)
+
     def get_by_idempotency_key(
         self, project_id: uuid.UUID, idempotency_key: str
     ) -> GenerationTask | None:

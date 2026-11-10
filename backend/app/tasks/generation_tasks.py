@@ -14,21 +14,25 @@ lifecycle is exercised without any model.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import socket
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
+from app.core.exceptions import AppError
 from app.db.models import GenerationTask
 from app.db.models.enums import TaskType
 from app.db.session import create_db_engine, create_session_factory, session_scope
+from app.services.result_service import result_storage_key
 from app.services.task_execution_service import TaskExecutionService
 from app.storage import LocalStorage, StorageBackend
 from app.tasks.celery_app import (
@@ -80,7 +84,27 @@ class TaskContext:
             raise GenerationCancelled("cancellation requested")
 
 
-Pipeline = Callable[[TaskContext], None]
+@dataclass(frozen=True, slots=True)
+class PipelineArtifact:
+    """A validated asset a pipeline produced and wants registered.
+
+    The pipeline owns preprocessing, inference, export and validation; the
+    worker owns the persistent write and the database transaction. Keeping the
+    two apart is what lets ``run_generation`` register the result and finish the
+    task atomically (06_object_generation.md Sections 12.4-12.5, 13.2).
+    """
+
+    path: Path
+    sha256: str
+    file_size_bytes: int
+    format: str = "GLB"
+    mime_type: str = "model/gltf-binary"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    storage_key: str | None = None
+    cleanup_dir: Path | None = None
+
+
+Pipeline = Callable[[TaskContext], PipelineArtifact | None]
 
 _pipelines: dict[TaskType, Pipeline] = {}
 
@@ -222,6 +246,7 @@ def run_generation(
             )
             return WorkerOutcome(task_id=task_id, status="failed", error_code=WORKER_UNAVAILABLE)
 
+        artifact: PipelineArtifact | None = None
         try:
             with _HeartbeatMonitor(
                 settings=settings,
@@ -229,7 +254,7 @@ def run_generation(
                 task_id=task_id,
                 worker_id=worker_id,
             ):
-                selected(context)
+                artifact = selected(context)
         except GenerationCancelled:
             service.cancel(task_id, worker_id=worker_id, reason="Task cancelled")
             return WorkerOutcome(task_id=task_id, status="cancelled")
@@ -253,7 +278,56 @@ def run_generation(
             )
             return WorkerOutcome(task_id=task_id, status="failed", error_code=str(error_code))
 
-        service.complete(task_id, worker_id=worker_id)
+        if artifact is not None:
+            # A pipeline that produced an asset gets its result registered in
+            # the same transaction that finishes the task (roadmap 5.8).
+            try:
+                completed = _persist_artifact(
+                    service=service,
+                    storage=storage,
+                    task=task,
+                    artifact=artifact,
+                    worker_id=worker_id,
+                )
+            except GenerationCancelled:
+                service.cancel(task_id, worker_id=worker_id, reason="Task cancelled")
+                return WorkerOutcome(task_id=task_id, status="cancelled")
+            except Exception as exc:
+                error_code = getattr(exc, "error_code", GENERATION_FAILED)
+                error_message = str(exc) or exc.__class__.__name__
+                logger.exception(
+                    "generation_result_persistence_failed",
+                    extra={
+                        "operation": "generation",
+                        "task_id": str(task_id),
+                        "project_id": str(task.project_id),
+                        "error_code": error_code,
+                    },
+                )
+                service.fail(
+                    task_id,
+                    worker_id=worker_id,
+                    error_code=str(error_code),
+                    error_message=error_message,
+                )
+                return WorkerOutcome(task_id=task_id, status="failed", error_code=str(error_code))
+
+            if not completed:
+                if service.is_cancel_requested(task_id):
+                    return WorkerOutcome(task_id=task_id, status="cancelled")
+                logger.warning(
+                    "generation_completion_not_owned",
+                    extra={
+                        "operation": "generation",
+                        "task_id": str(task_id),
+                        "project_id": str(task.project_id),
+                    },
+                )
+                return WorkerOutcome(task_id=task_id, status="skipped")
+            _cleanup_work_dir(artifact)
+        else:
+            service.complete(task_id, worker_id=worker_id)
+
         logger.info(
             "generation_task_completed",
             extra={
@@ -263,6 +337,120 @@ def run_generation(
             },
         )
         return WorkerOutcome(task_id=task_id, status="completed")
+
+
+STORAGE_WRITE_FAILED = "STORAGE_WRITE_FAILED"
+RESULT_PERSISTENCE_FAILED = "RESULT_PERSISTENCE_FAILED"
+_HASH_CHUNK_SIZE = 4 * 1024 * 1024
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 of a local artifact, streaming it."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_HASH_CHUNK_SIZE):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _delete_quietly(storage: StorageBackend, key: str) -> None:
+    """Remove a stored object if the task failed before registering it."""
+    try:
+        storage.delete(key)
+    except Exception:
+        logger.warning(
+            "generation_result_cleanup_failed",
+            extra={"operation": "generation", "storage_key": key},
+        )
+
+
+def _cleanup_work_dir(artifact: PipelineArtifact) -> None:
+    """Remove task-specific intermediate files after a successful store."""
+    directory = artifact.cleanup_dir
+    if directory is None:
+        return
+    try:
+        import shutil
+
+        shutil.rmtree(directory, ignore_errors=True)
+    except Exception:
+        logger.warning(
+            "generation_work_dir_cleanup_failed",
+            extra={"operation": "generation", "work_dir": str(directory)},
+        )
+
+
+def _persist_artifact(
+    *,
+    service: TaskExecutionService,
+    storage: StorageBackend,
+    task: GenerationTask,
+    artifact: PipelineArtifact,
+    worker_id: str,
+) -> bool:
+    """Store a validated artifact, then register it atomically.
+
+    The asset is written before the transaction because a database transaction
+    must not span a potentially large file write. The file is removed again when
+    registration raises or when a cancellation won the race, so a failed attempt
+    never leaves a current result behind (06 Section 12.4; OBJ-AC-15).
+    """
+    key = artifact.storage_key or result_storage_key(task.project_id, task.id)
+    path = Path(artifact.path)
+
+    if not path.is_file():
+        raise GenerationFailure(STORAGE_WRITE_FAILED, "The generated asset is not readable.")
+    if _sha256_file(path) != artifact.sha256.strip().lower():
+        raise GenerationFailure(
+            RESULT_PERSISTENCE_FAILED, "The generated asset checksum changed before storage."
+        )
+    if path.stat().st_size != artifact.file_size_bytes:
+        raise GenerationFailure(
+            RESULT_PERSISTENCE_FAILED, "The generated asset size changed before storage."
+        )
+
+    try:
+        with path.open("rb") as stream:
+            written = storage.save(stream, key)
+    except AppError as exc:
+        raise GenerationFailure(
+            STORAGE_WRITE_FAILED, "The generated asset could not be stored."
+        ) from exc
+    except OSError as exc:
+        raise GenerationFailure(
+            STORAGE_WRITE_FAILED, "The generated asset could not be stored."
+        ) from exc
+    if written != artifact.file_size_bytes:
+        _delete_quietly(storage, key)
+        raise GenerationFailure(
+            RESULT_PERSISTENCE_FAILED, "The stored asset does not match the generated file."
+        )
+
+    try:
+        completed = service.complete_with_result(
+            task.id,
+            worker_id=worker_id,
+            storage_key=key,
+            format=artifact.format,
+            mime_type=artifact.mime_type,
+            file_size_bytes=artifact.file_size_bytes,
+            sha256=artifact.sha256,
+            metadata=artifact.metadata,
+        )
+    except Exception as exc:
+        _delete_quietly(storage, key)
+        raise GenerationFailure(
+            RESULT_PERSISTENCE_FAILED, "The generation result could not be registered."
+        ) from exc
+
+    if not completed:
+        # A cancellation request means this result must never become current.
+        # A lost lease is different: recovery may still own the same task key,
+        # so the file is left in place for the recovering attempt.
+        if service.is_cancel_requested(task.id):
+            _delete_quietly(storage, key)
+        return False
+    return True
 
 
 def _runtime_for(settings: Settings) -> tuple[sessionmaker[Session], StorageBackend]:

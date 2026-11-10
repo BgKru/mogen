@@ -45,3 +45,11 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+/**
+ * Build a same-origin URL for resources fetched outside Axios, such as the
+ * authenticated GLB download that the browser streams directly.
+ */
+export function apiUrl(path: string): string {
+  return apiClient.getUri({ url: path });
+}

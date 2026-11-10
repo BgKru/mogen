@@ -69,6 +69,58 @@ export interface ProjectImageListDto {
   total_count: number;
 }
 
+export interface GenerationTaskDto {
+  id: string;
+  project_id: string;
+  task_type: string;
+  status: string;
+  stage: string | null;
+  progress_percent: number | null;
+  status_message: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface GenerationTaskSummaryDto {
+  id: string;
+  task_type: string;
+  status: string;
+  stage: string | null;
+  progress_percent: number | null;
+  status_message: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface GenerationStartDto {
+  task: GenerationTaskDto;
+}
+
+export interface ProjectProcessingStatusDto {
+  project_id: string;
+  project_status: string;
+  result_available: boolean;
+  latest_task: GenerationTaskSummaryDto | null;
+}
+
+export interface GenerationResultDto {
+  id: string;
+  project_id: string;
+  task_id: string;
+  format: string;
+  mime_type: string;
+  file_size_bytes: number;
+  metadata: Record<string, unknown>;
+  is_current: boolean;
+  created_at: string;
+}
+
 export interface ApiErrorDetailDto {
   field?: string | null;
   code?: string;

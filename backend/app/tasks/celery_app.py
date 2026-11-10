@@ -38,6 +38,7 @@ GENERATION_QUEUES = (OBJECT_GENERATION_QUEUE, SCENE_RECONSTRUCTION_QUEUE)
 OBJECT_GENERATION_TASK = "generate_object_task"
 SCENE_RECONSTRUCTION_TASK = "reconstruct_scene_task"
 CLEANUP_TASK_NAME = "cleanup_storage_task"
+WORKSPACE_SWEEP_TASK_NAME = "cleanup_scene_workspaces_task"
 
 CLEANUP_TASK_MODULE = "app.tasks.cleanup_tasks"
 GENERATION_TASK_MODULE = "app.tasks.generation_tasks"
@@ -48,6 +49,7 @@ TASK_ROUTES = {
     OBJECT_GENERATION_TASK: {"queue": OBJECT_GENERATION_QUEUE},
     SCENE_RECONSTRUCTION_TASK: {"queue": SCENE_RECONSTRUCTION_QUEUE},
     CLEANUP_TASK_NAME: {"queue": CLEANUP_QUEUE},
+    WORKSPACE_SWEEP_TASK_NAME: {"queue": CLEANUP_QUEUE},
 }
 
 # Seconds of soft-limit headroom before the hard limit kills the task.
@@ -98,6 +100,10 @@ def create_celery_app(settings: Settings) -> Celery:
                 "time_limit": cleanup_limit,
                 "soft_time_limit": max(1, cleanup_limit - _SOFT_LIMIT_MARGIN_SECONDS),
             },
+            WORKSPACE_SWEEP_TASK_NAME: {
+                "time_limit": cleanup_limit,
+                "soft_time_limit": max(1, cleanup_limit - _SOFT_LIMIT_MARGIN_SECONDS),
+            },
         },
         task_time_limit=longest_limit,
         task_soft_time_limit=max(1, longest_limit - _SOFT_LIMIT_MARGIN_SECONDS),
@@ -119,7 +125,11 @@ def create_celery_app(settings: Settings) -> Celery:
             "cleanup-poll": {
                 "task": CLEANUP_TASK_NAME,
                 "schedule": settings.cleanup_poll_interval_seconds,
-            }
+            },
+            "scene-workspace-sweep": {
+                "task": WORKSPACE_SWEEP_TASK_NAME,
+                "schedule": settings.scene_workspace_sweep_interval_seconds,
+            },
         },
     )
     return app

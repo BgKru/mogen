@@ -66,6 +66,10 @@ API_TEST_SETTINGS: dict[str, Any] = {
     "app_env": "test",
     "log_level": "WARNING",
     "redis_url": "redis://localhost:6379/0",
+    # Never fall back to the production /data volume: a test client that does
+    # not override get_storage must not leave uploaded files in the shared
+    # application storage (Phase 8 finding).
+    "storage_root": "/tmp/mogen-test-storage",
     "cors_origins": API_ALLOWED_ORIGIN,
     "csrf_secret": "integration-csrf-secret-0123456789abcdef",
     "session_cookie_secure": False,

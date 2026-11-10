@@ -1,0 +1,37 @@
+# GPU override for the Object Worker and Scene Worker
+# (08_infrastructure.md Section 6.4).
+#
+# The base compose.yaml stays runnable on a CPU-only host. Use this file when
+# the NVIDIA Container Toolkit is available and the workers must use the GPU:
+#
+#   docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+#
+# `count` and `device_ids` must not be configured together (INF-AC-13).
+
+services:
+  object-worker:
+    environment:
+      # Force CUDA for the GPU deployment; a worker asked for CUDA never
+      # silently falls back to CPU (06_object_generation.md Section 5.3).
+      OBJECT_DEVICE: cuda:0
+      OBJECT_ALLOW_CPU_FALLBACK: "false"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  scene-worker:
+    environment:
+      # COLMAP's official image is CUDA-enabled; dense OpenMVS stays CPU-only
+      # (SCENE_OPENMVS_USE_CUDA=false) unless a CUDA build is provisioned.
+      SCENE_COLMAP_USE_GPU: "true"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

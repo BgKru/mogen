@@ -1,0 +1,21 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+markers = [
+    "unit: fast, isolated tests with no external infrastructure",
+    "integration: tests that require real infrastructure such as PostgreSQL",
+    "ml: tests that exercise ML pipelines",
+    "gpu: tests that require a CUDA-capable device",
+    "scene_binaries: tests that execute the real COLMAP/OpenMVS executables",
+    "slow: tests that take a long time to execute",
+]

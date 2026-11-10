@@ -1,0 +1,33 @@
+# Build context for the object-worker image (ml/object_generation/Dockerfile).
+# The API and frontend images use their own contexts and their own ignore files.
+
+.git
+.gitignore
+.env
+.env.*
+.proof
+
+docs
+frontend
+infrastructure
+tests
+
+compose.yaml
+compose.gpu.yaml
+README.md
+*.md
+
+ml/object_generation/.ruff_cache
+ml/object_generation/viewer/node_modules
+ml/object_generation/viewer
+ml/scene_reconstruction/.pytest_cache
+ml/scene_reconstruction/.ruff_cache
+# OpenMVS writes a <tool>-<timestamp>.log next to its working directory; a
+# host-side tool probe used to leave these in the package directory.
+ml/scene_reconstruction/*.log
+ml/workers
+
+backend/tests/__pycache__
+backend/app/__pycache__
+**/__pycache__
+**/*.pyc

@@ -1,0 +1,25 @@
+# Object-generation worker dependencies (06_object_generation.md Section 4.2).
+#
+# The worker image installs backend/requirements.txt first and this file second.
+# Every version is pinned deliberately and recorded in
+# docs/architecture/phase0_decisions.md and the Phase 5 close-out review.
+# `torch`, `torchvision` and `torchmcubes` come from the PyTorch base image and
+# the build stage, not from this file.
+
+# TripoSR model code (pinned repository revision is cloned in the Dockerfile).
+omegaconf==2.3.0
+einops==0.7.0
+huggingface-hub==0.26.2
+transformers==4.46.3
+# Mesh extraction/export. TripoSR uses trimesh.Trimesh and .export("glb").
+trimesh==4.12.2
+# Background removal (official TripoSR preprocessing) and its CPU runtime.
+rembg[cpu]==2.0.87
+onnxruntime==1.23.2
+# Optional TripoSR texture baking / rendering support kept for the pinned model.
+xatlas==0.0.9
+moderngl==5.10.0
+imageio==2.37.0
+# TripoSR preprocessing and mesh statistics are NumPy based.
+numpy==2.3.5
+tqdm==4.67.1

@@ -1,0 +1,5 @@
+# Build-time dependencies for the torchmcubes CUDA extension.
+# The PyTorch devel image already provides cmake (>=3.24) and ninja; pinning
+# them to PyPI versions only adds a large download, so they are not listed.
+scikit-build-core==1.1.2
+pybind11==2.13.6

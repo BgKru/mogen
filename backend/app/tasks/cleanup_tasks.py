@@ -24,8 +24,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory, session_scope
 from app.services.cleanup_service import CleanupService, CleanupSummary
+from app.services.workspace_retention_service import (
+    RetentionSummary,
+    SceneWorkspaceRetentionService,
+)
 from app.storage import LocalStorage, StorageBackend
-from app.tasks.celery_app import CLEANUP_TASK_NAME, celery_app
+from app.tasks.celery_app import (
+    CLEANUP_TASK_NAME,
+    WORKSPACE_SWEEP_TASK_NAME,
+    celery_app,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,20 @@ def run_cleanup(
         return service.process_pending(limit=limit)
 
 
+def run_workspace_sweep(
+    *,
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+) -> RetentionSummary:
+    """Run one scene-workspace retention sweep without Celery.
+
+    Kept broker-free so the policy can be tested against a scratch database and
+    a temporary workspace root (09_testing.md Section 7.5).
+    """
+    with session_scope(session_factory) as session:
+        return SceneWorkspaceRetentionService(session, settings).prune()
+
+
 @celery_app.task(name=CLEANUP_TASK_NAME, bind=True)
 def cleanup_storage_task(self: object, job_id: str | None = None) -> dict[str, int]:
     """Process queued cleanup jobs and report the cycle summary."""
@@ -95,3 +117,24 @@ def cleanup_storage_task(self: object, job_id: str | None = None) -> dict[str, i
         "failed": summary.failed,
         "deferred": summary.deferred,
     }
+
+
+@celery_app.task(name=WORKSPACE_SWEEP_TASK_NAME)
+def cleanup_scene_workspaces_task() -> dict[str, int]:
+    """Queue expired scene workspaces for deletion and report usage.
+
+    Runs hourly from the cleanup worker's beat schedule; the actual filesystem
+    deletion is performed by ``cleanup_storage_task`` from a queued job, so this
+    task stays short and retry-safe.
+    """
+    settings = get_settings()
+    session_factory, _storage = _runtime_for(settings)
+    summary = run_workspace_sweep(settings=settings, session_factory=session_factory)
+    logger.info(
+        "scene_workspace_sweep_finished scanned=%d queued=%d retained=%d",
+        summary.scanned,
+        summary.queued,
+        summary.retained,
+        extra={"operation": "workspace_retention", "workspace_usage": summary.as_dict()},
+    )
+    return summary.as_dict()

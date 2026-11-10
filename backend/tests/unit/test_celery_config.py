@@ -20,6 +20,7 @@ from app.tasks.celery_app import (
     OBJECT_GENERATION_TASK,
     SCENE_RECONSTRUCTION_QUEUE,
     SCENE_RECONSTRUCTION_TASK,
+    WORKSPACE_SWEEP_TASK_NAME,
     create_celery_app,
 )
 
@@ -54,6 +55,8 @@ def test_each_task_is_routed_to_its_own_queue() -> None:
     assert app.conf.task_routes[OBJECT_GENERATION_TASK] == {"queue": OBJECT_GENERATION_QUEUE}
     assert app.conf.task_routes[SCENE_RECONSTRUCTION_TASK] == {"queue": SCENE_RECONSTRUCTION_QUEUE}
     assert app.conf.task_routes[CLEANUP_TASK_NAME] == {"queue": CLEANUP_QUEUE}
+    # The retention sweep is cleanup work, so it never blocks generation.
+    assert app.conf.task_routes[WORKSPACE_SWEEP_TASK_NAME] == {"queue": CLEANUP_QUEUE}
 
 
 def test_no_result_backend_is_configured() -> None:
@@ -87,6 +90,10 @@ def test_time_limits_are_per_pipeline() -> None:
         "time_limit": 300,
         "soft_time_limit": 270,
     }
+    assert app.conf.task_annotations[WORKSPACE_SWEEP_TASK_NAME] == {
+        "time_limit": 300,
+        "soft_time_limit": 270,
+    }
     # The global fallback covers the longest configured task.
     assert app.conf.task_time_limit == 8000
 
@@ -105,6 +112,14 @@ def test_beat_polls_for_pending_cleanup_jobs() -> None:
     assert entry["schedule"] == 7
 
 
+def test_beat_sweeps_scene_workspaces_on_its_own_schedule() -> None:
+    app = create_celery_app(_settings(scene_workspace_sweep_interval_seconds=1234))
+
+    entry = app.conf.beat_schedule["scene-workspace-sweep"]
+    assert entry["task"] == WORKSPACE_SWEEP_TASK_NAME
+    assert entry["schedule"] == 1234
+
+
 def test_the_broker_url_comes_from_settings() -> None:
     app = create_celery_app(_settings(celery_broker_url="redis://other:6379/2"))
 
@@ -115,5 +130,10 @@ def test_every_queue_task_is_registered() -> None:
     from app.tasks import cleanup_tasks, generation_tasks  # noqa: F401  # register tasks
     from app.tasks.celery_app import celery_app
 
-    for name in (OBJECT_GENERATION_TASK, SCENE_RECONSTRUCTION_TASK, CLEANUP_TASK_NAME):
+    for name in (
+        OBJECT_GENERATION_TASK,
+        SCENE_RECONSTRUCTION_TASK,
+        CLEANUP_TASK_NAME,
+        WORKSPACE_SWEEP_TASK_NAME,
+    ):
         assert name in celery_app.tasks

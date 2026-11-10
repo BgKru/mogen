@@ -355,6 +355,28 @@ def test_previous_session_csrf_token_is_rejected_after_login(
     assert response.json()["error"]["code"] == "CSRF_VALIDATION_FAILED"
 
 
+def test_a_csrf_token_is_bound_to_its_own_session(register_client) -> None:
+    """A token signed for one session is rejected for another (roadmap 8.1/8.8)."""
+    alice = register_client(email="alice@example.com")
+    bob = register_client(email="bob@example.com")
+    alice_token = alice.cookies.get("csrf_token")
+    bob_session = bob.cookies.get("session")
+    bob.cookies.clear()
+
+    response = bob.post(
+        LOGOUT_URL,
+        headers={
+            "Cookie": f"session={bob_session}; csrf_token={alice_token}",
+            "X-CSRF-Token": alice_token,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "CSRF_VALIDATION_FAILED"
+    # Alice's token did not revoke Bob's session.
+    assert bob.get(ME_URL, headers={"Cookie": f"session={bob_session}"}).status_code == 200
+
+
 # --- origin validation (api_contracts 3.3) --------------------------------
 
 

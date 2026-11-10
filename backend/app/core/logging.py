@@ -20,6 +20,8 @@ EXTRA_FIELDS = (
     "operation",
     "error_code",
     "settings",
+    # Workspace retention monitoring (roadmap 8.5, 07 Section 15.7).
+    "workspace_usage",
 )
 
 _configured = False

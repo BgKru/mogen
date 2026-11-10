@@ -100,3 +100,18 @@ def test_redacted_settings_hide_the_broker_password() -> None:
     assert "secret" not in str(redacted["celery_broker_url"])
     assert "***" in str(redacted["celery_broker_url"])
     assert redacted["cleanup_max_attempts"] == 3
+
+
+def test_scene_workspace_retention_defaults_and_bounds() -> None:
+    """Retention is configurable and 0 means "keep for diagnostics forever"."""
+    settings = Settings()
+
+    assert settings.scene_workspace_retention_hours == 168
+    assert settings.scene_workspace_sweep_interval_seconds == 3600
+    assert settings.redacted()["scene_workspace_retention_hours"] == 168
+    assert Settings(scene_workspace_retention_hours=0).scene_workspace_retention_hours == 0
+
+    with pytest.raises(ValidationError):
+        Settings(scene_workspace_retention_hours=-1)
+    with pytest.raises(ValidationError):
+        Settings(scene_workspace_sweep_interval_seconds=59)

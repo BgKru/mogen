@@ -85,6 +85,67 @@ class Settings(BaseSettings):
     object_task_time_limit_seconds: int = 3600
     scene_task_time_limit_seconds: int = 7200
 
+    # Object generation / TripoSR (06_object_generation.md Section 16). The
+    # API image never imports torch; these values are consumed by the object
+    # worker, and the model cache is a persistent Compose volume.
+    object_model_id: str = "stabilityai/TripoSR"
+    object_model_revision: str = "5b521936b01fbe1890f6f9baed0254ab6351c04a"
+    object_model_dir: Path = Path("/models/triposr")
+    object_model_sha256: str = "429e2c6b22a0923967459de24d67f05962b235f79cde6b032aa7ed2ffcd970ee"
+    # Task-specific intermediate directories (06 Section 7.7). Ephemeral, never
+    # served to clients and removed after the asset is stored.
+    object_work_dir: Path = Path("/tmp/mogen-object-generation")
+    object_dino_model_id: str = "facebook/dino-vitb16"
+    object_dino_revision: str = "f205d5d8e640a89a2b8ef0369670dfc37cc07fc2"
+    object_device: str = "cuda:0"
+    object_allow_cpu_fallback: bool = False
+    object_chunk_size: int = 8192
+    object_mc_resolution: int = 256
+    object_remove_background: bool = True
+    object_foreground_ratio: float = 0.85
+    object_output_format: str = "glb"
+    object_bake_texture: bool = False
+    object_texture_resolution: int = 2048
+    object_max_task_seconds: int = 600
+    object_worker_concurrency: int = 1
+    object_rembg_model: str = "u2net"
+    object_input_size: int = 512
+    object_generation_enabled: bool = True
+
+    # Scene reconstruction / COLMAP + OpenMVS (07_scene_reconstruction.md
+    # Section 16). The API image never imports these tools; the values are
+    # consumed by the scene worker and mirrored by ml/scene_reconstruction.
+    scene_reconstruction_enabled: bool = True
+    scene_colmap_executable: Path = Path("/usr/local/bin/colmap")
+    scene_openmvs_bin_dir: Path = Path("/usr/local/bin/OpenMVS")
+    # Task-specific intermediate directories (07 Section 4.7). They live on the
+    # shared data volume so a restarted worker can reuse validated checkpoints;
+    # they are never served to clients and are removed after the asset is stored.
+    scene_work_dir: Path = Path("/data/work/scene")
+    scene_matching_strategy: str = "EXHAUSTIVE"
+    scene_colmap_use_gpu: bool = True
+    scene_colmap_max_features: int = 8192
+    scene_colmap_camera_model: str = "SIMPLE_RADIAL"
+    scene_max_image_size: int = 2000
+    scene_max_threads: int = 4
+    scene_openmvs_use_cuda: bool = False
+    scene_enable_mesh_refinement: bool = True
+    scene_enable_texture_generation: bool = True
+    scene_min_registered_images: int = 3
+    scene_min_registration_ratio: float = 0.5
+    scene_min_sparse_points: int = 100
+    scene_min_dense_points: int = 100
+    scene_max_task_seconds: int = 14400
+    scene_colmap_timeout_seconds: int = 3600
+    scene_openmvs_timeout_seconds: int = 5400
+    scene_export_timeout_seconds: int = 1800
+    scene_output_format: str = "GLB"
+    # Scene workspace retention (07 Section 15.7). A failed reconstruction keeps
+    # its workspace for diagnostics; the cleanup sweep prunes terminal
+    # workspaces older than this many hours. 0 disables pruning.
+    scene_workspace_retention_hours: int = 168
+    scene_workspace_sweep_interval_seconds: int = 3600
+
     # Name reported in structured worker logs; Compose sets it per service.
     worker_service_name: str = "cleanup-worker"
 
@@ -148,6 +209,58 @@ class Settings(BaseSettings):
             message = "storage_root must be an absolute path"
             raise ValueError(message)
         return value
+
+    @field_validator("object_model_dir")
+    @classmethod
+    def _validate_object_model_dir(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            message = "object_model_dir must be an absolute path"
+            raise ValueError(message)
+        return value
+
+    @field_validator("object_work_dir")
+    @classmethod
+    def _validate_object_work_dir(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            message = "object_work_dir must be an absolute path"
+            raise ValueError(message)
+        return value
+
+    @field_validator("scene_colmap_executable", "scene_openmvs_bin_dir", "scene_work_dir")
+    @classmethod
+    def _validate_scene_paths(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            message = "scene tool and workspace paths must be absolute"
+            raise ValueError(message)
+        return value
+
+    @field_validator("scene_matching_strategy")
+    @classmethod
+    def _validate_scene_matching_strategy(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"EXHAUSTIVE", "SEQUENTIAL"}:
+            message = "scene_matching_strategy must be EXHAUSTIVE or SEQUENTIAL"
+            raise ValueError(message)
+        return normalized
+
+    @field_validator("scene_output_format")
+    @classmethod
+    def _validate_scene_output_format(cls, value: str) -> str:
+        if value.strip().upper() != "GLB":
+            message = "scene_output_format must be 'GLB' for the MVP"
+            raise ValueError(message)
+        return "GLB"
+
+    @field_validator("object_model_sha256")
+    @classmethod
+    def _validate_object_model_sha256(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized and (
+            len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized)
+        ):
+            message = "object_model_sha256 must be a 64-character hexadecimal SHA-256"
+            raise ValueError(message)
+        return normalized
 
     @model_validator(mode="after")
     def _validate_limits(self) -> Settings:
@@ -226,6 +339,72 @@ class Settings(BaseSettings):
         if self.scene_task_time_limit_seconds < 1:
             message = "scene_task_time_limit_seconds must be at least 1"
             raise ValueError(message)
+        if not self.object_device.strip():
+            message = "object_device must not be empty"
+            raise ValueError(message)
+        if self.object_chunk_size < 1:
+            message = "object_chunk_size must be at least 1"
+            raise ValueError(message)
+        if not 32 <= self.object_mc_resolution <= 512:
+            message = "object_mc_resolution must be between 32 and 512"
+            raise ValueError(message)
+        if not 0 < self.object_foreground_ratio <= 1:
+            message = "object_foreground_ratio must be in (0, 1]"
+            raise ValueError(message)
+        if self.object_output_format.lower() != "glb":
+            message = "object_output_format must be 'glb' for the MVP"
+            raise ValueError(message)
+        if self.object_bake_texture:
+            message = "object_bake_texture is not implemented in the MVP and must be false"
+            raise ValueError(message)
+        if self.object_texture_resolution < 1:
+            message = "object_texture_resolution must be at least 1"
+            raise ValueError(message)
+        if self.object_max_task_seconds < 1:
+            message = "object_max_task_seconds must be at least 1"
+            raise ValueError(message)
+        if self.object_worker_concurrency < 1:
+            message = "object_worker_concurrency must be at least 1"
+            raise ValueError(message)
+        if self.object_input_size < 32:
+            message = "object_input_size must be at least 32"
+            raise ValueError(message)
+        if self.scene_colmap_max_features < 1:
+            message = "scene_colmap_max_features must be at least 1"
+            raise ValueError(message)
+        if self.scene_max_image_size < 1:
+            message = "scene_max_image_size must be at least 1"
+            raise ValueError(message)
+        if self.scene_max_threads < 1:
+            message = "scene_max_threads must be at least 1"
+            raise ValueError(message)
+        if self.scene_min_registered_images < 1:
+            message = "scene_min_registered_images must be at least 1"
+            raise ValueError(message)
+        if not 0 < self.scene_min_registration_ratio <= 1:
+            message = "scene_min_registration_ratio must be in (0, 1]"
+            raise ValueError(message)
+        if self.scene_min_sparse_points < 0 or self.scene_min_dense_points < 0:
+            message = "scene point thresholds must not be negative"
+            raise ValueError(message)
+        if self.scene_max_task_seconds < 1:
+            message = "scene_max_task_seconds must be at least 1"
+            raise ValueError(message)
+        if self.scene_colmap_timeout_seconds < 1:
+            message = "scene_colmap_timeout_seconds must be at least 1"
+            raise ValueError(message)
+        if self.scene_openmvs_timeout_seconds < 1:
+            message = "scene_openmvs_timeout_seconds must be at least 1"
+            raise ValueError(message)
+        if self.scene_export_timeout_seconds < 1:
+            message = "scene_export_timeout_seconds must be at least 1"
+            raise ValueError(message)
+        if self.scene_workspace_retention_hours < 0:
+            message = "scene_workspace_retention_hours must not be negative"
+            raise ValueError(message)
+        if self.scene_workspace_sweep_interval_seconds < 60:
+            message = "scene_workspace_sweep_interval_seconds must be at least 60"
+            raise ValueError(message)
         if not self.worker_service_name.strip():
             message = "worker_service_name must not be empty"
             raise ValueError(message)
@@ -281,6 +460,51 @@ class Settings(BaseSettings):
             "recovery_poll_interval_seconds": self.recovery_poll_interval_seconds,
             "object_task_time_limit_seconds": self.object_task_time_limit_seconds,
             "scene_task_time_limit_seconds": self.scene_task_time_limit_seconds,
+            "object_model_id": self.object_model_id,
+            "object_model_revision": self.object_model_revision,
+            "object_model_dir": str(self.object_model_dir),
+            "object_model_sha256": self.object_model_sha256,
+            "object_work_dir": str(self.object_work_dir),
+            "object_dino_model_id": self.object_dino_model_id,
+            "object_dino_revision": self.object_dino_revision,
+            "object_device": self.object_device,
+            "object_allow_cpu_fallback": self.object_allow_cpu_fallback,
+            "object_chunk_size": self.object_chunk_size,
+            "object_mc_resolution": self.object_mc_resolution,
+            "object_remove_background": self.object_remove_background,
+            "object_foreground_ratio": self.object_foreground_ratio,
+            "object_output_format": self.object_output_format,
+            "object_bake_texture": self.object_bake_texture,
+            "object_texture_resolution": self.object_texture_resolution,
+            "object_max_task_seconds": self.object_max_task_seconds,
+            "object_worker_concurrency": self.object_worker_concurrency,
+            "object_rembg_model": self.object_rembg_model,
+            "object_input_size": self.object_input_size,
+            "object_generation_enabled": self.object_generation_enabled,
+            "scene_reconstruction_enabled": self.scene_reconstruction_enabled,
+            "scene_colmap_executable": str(self.scene_colmap_executable),
+            "scene_openmvs_bin_dir": str(self.scene_openmvs_bin_dir),
+            "scene_work_dir": str(self.scene_work_dir),
+            "scene_matching_strategy": self.scene_matching_strategy,
+            "scene_colmap_use_gpu": self.scene_colmap_use_gpu,
+            "scene_colmap_max_features": self.scene_colmap_max_features,
+            "scene_colmap_camera_model": self.scene_colmap_camera_model,
+            "scene_max_image_size": self.scene_max_image_size,
+            "scene_max_threads": self.scene_max_threads,
+            "scene_openmvs_use_cuda": self.scene_openmvs_use_cuda,
+            "scene_enable_mesh_refinement": self.scene_enable_mesh_refinement,
+            "scene_enable_texture_generation": self.scene_enable_texture_generation,
+            "scene_min_registered_images": self.scene_min_registered_images,
+            "scene_min_registration_ratio": self.scene_min_registration_ratio,
+            "scene_min_sparse_points": self.scene_min_sparse_points,
+            "scene_min_dense_points": self.scene_min_dense_points,
+            "scene_max_task_seconds": self.scene_max_task_seconds,
+            "scene_colmap_timeout_seconds": self.scene_colmap_timeout_seconds,
+            "scene_openmvs_timeout_seconds": self.scene_openmvs_timeout_seconds,
+            "scene_export_timeout_seconds": self.scene_export_timeout_seconds,
+            "scene_output_format": self.scene_output_format,
+            "scene_workspace_retention_hours": self.scene_workspace_retention_hours,
+            "scene_workspace_sweep_interval_seconds": self.scene_workspace_sweep_interval_seconds,
             "worker_service_name": self.worker_service_name,
             "storage_root": str(self.storage_root),
             "session_ttl_hours": self.session_ttl_hours,

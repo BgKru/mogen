@@ -1,21 +1,29 @@
 import type {
+  GenerationResult,
+  GenerationTask,
+  GenerationTaskSummary,
   Project,
   ProjectCurrentResult,
   ProjectImage,
   ProjectImagePage,
   ProjectLatestTask,
   ProjectPage,
+  ProjectProcessingStatus,
   ProjectStatus,
   ProjectType,
   User,
 } from "../types/api";
 import type {
+  GenerationResultDto,
+  GenerationTaskDto,
+  GenerationTaskSummaryDto,
   ProjectCurrentResultDto,
   ProjectDto,
   ProjectImageDto,
   ProjectImageListDto,
   ProjectLatestTaskDto,
   ProjectListDto,
+  ProjectProcessingStatusDto,
   UserDto,
 } from "./dto";
 
@@ -90,5 +98,57 @@ export function mapProjectImagePage(dto: ProjectImageListDto): ProjectImagePage 
   return {
     items: dto.items.map(mapProjectImage),
     totalCount: dto.total_count,
+  };
+}
+
+/** Convert a task summary embedded in the status response. */
+export function mapGenerationTaskSummary(dto: GenerationTaskSummaryDto): GenerationTaskSummary {
+  return {
+    id: dto.id,
+    taskType: dto.task_type as ProjectType,
+    status: dto.status,
+    stage: dto.stage,
+    progressPercent: dto.progress_percent,
+    statusMessage: dto.status_message,
+    errorCode: dto.error_code,
+    errorMessage: dto.error_message,
+    createdAt: dto.created_at,
+    startedAt: dto.started_at,
+    finishedAt: dto.finished_at,
+  };
+}
+
+/** Convert a full generation task returned when generation starts. */
+export function mapGenerationTask(dto: GenerationTaskDto): GenerationTask {
+  return {
+    ...mapGenerationTaskSummary(dto),
+    projectId: dto.project_id,
+  };
+}
+
+/** Convert the persisted project/task processing status. */
+export function mapProjectProcessingStatus(
+  dto: ProjectProcessingStatusDto,
+): ProjectProcessingStatus {
+  return {
+    projectId: dto.project_id,
+    projectStatus: dto.project_status as ProjectStatus,
+    resultAvailable: dto.result_available,
+    latestTask: dto.latest_task ? mapGenerationTaskSummary(dto.latest_task) : null,
+  };
+}
+
+/** Convert current result metadata. */
+export function mapGenerationResult(dto: GenerationResultDto): GenerationResult {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    taskId: dto.task_id,
+    format: dto.format,
+    mimeType: dto.mime_type,
+    fileSizeBytes: dto.file_size_bytes,
+    metadata: dto.metadata,
+    isCurrent: dto.is_current,
+    createdAt: dto.created_at,
   };
 }

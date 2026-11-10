@@ -1,0 +1,16 @@
+# Scene-reconstruction worker dependencies (07_scene_reconstruction.md Section 16).
+#
+# The worker image installs backend/requirements.txt first and this file second.
+# Every version is pinned deliberately and recorded in
+# docs/architecture/phase0_decisions.md and the Phase 6 close-out review.
+# COLMAP and OpenMVS are native executables installed by the Dockerfile, not
+# Python packages.
+
+# GLB repack after the OpenMVS export: load the OBJ/MTL/PNG (or GLB) set and
+# write one self-contained GLB with embedded buffers and images.
+trimesh==4.12.2
+# trimesh's in-memory mesh operations and the geometry statistics.
+numpy==2.3.5
+# Texture decoding during import/repack and the preflight image checks; the
+# backend already pins the same version.
+pillow==13.0.0

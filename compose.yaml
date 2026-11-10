@@ -13,6 +13,22 @@ x-backend-build: &backend-build
   context: ./backend
   target: development
 
+# The object worker deliberately uses a different image: it carries PyTorch,
+# TripoSR and torchmcubes, which the API must not contain
+# (08_infrastructure.md Sections 3.5 and 4.3).
+x-object-worker-build: &object-worker-build
+  context: .
+  dockerfile: ml/object_generation/Dockerfile
+  target: development
+
+# The scene worker is a third image: COLMAP 4.2.1 (CUDA-enabled), OpenMVS 2.4.0
+# and their native dependencies must not reach the API or object worker
+# (08_infrastructure.md Sections 3.6 and 4.4).
+x-scene-worker-build: &scene-worker-build
+  context: .
+  dockerfile: ml/scene_reconstruction/Dockerfile
+  target: development
+
 services:
   db:
     # PostgreSQL 17.11, verified in Phase 1. Digest pin: update deliberately.
@@ -142,6 +158,11 @@ services:
       CLEANUP_POLL_INTERVAL_SECONDS: ${CLEANUP_POLL_INTERVAL_SECONDS:-15}
       CLEANUP_MAX_ATTEMPTS: ${CLEANUP_MAX_ATTEMPTS:-3}
       CLEANUP_TASK_TIME_LIMIT_SECONDS: ${CLEANUP_TASK_TIME_LIMIT_SECONDS:-600}
+      # Scene workspace retention sweep (07 Section 15.7): the cleanup worker
+      # prunes terminal scene workspaces and reports temporary storage usage.
+      SCENE_WORK_DIR: ${SCENE_WORK_DIR:-/data/work/scene}
+      SCENE_WORKSPACE_RETENTION_HOURS: ${SCENE_WORKSPACE_RETENTION_HOURS:-168}
+      SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS: ${SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS:-3600}
     volumes:
       - app_data:/data
     depends_on:
@@ -166,12 +187,38 @@ services:
     networks:
       - internal
 
+  model-init:
+    build: *object-worker-build
+    image: mogen-object-worker:dev
+    # One-shot controlled initialization: downloads the pinned TripoSR weights,
+    # the DINO config and the rembg model into the persistent cache. No task
+    # execution ever downloads anything (06_object_generation.md Section 4.5).
+    restart: "no"
+    command: ["python", "-m", "object_generation.download_models"]
+    environment:
+      OBJECT_MODEL_ID: ${OBJECT_MODEL_ID:-stabilityai/TripoSR}
+      OBJECT_MODEL_REVISION: ${OBJECT_MODEL_REVISION:-5b521936b01fbe1890f6f9baed0254ab6351c04a}
+      OBJECT_MODEL_DIR: ${OBJECT_MODEL_DIR:-/models/triposr}
+      OBJECT_MODEL_SHA256: ${OBJECT_MODEL_SHA256:-429e2c6b22a0923967459de24d67f05962b235f79cde6b032aa7ed2ffcd970ee}
+      OBJECT_DINO_MODEL_ID: ${OBJECT_DINO_MODEL_ID:-facebook/dino-vitb16}
+      OBJECT_DINO_REVISION: ${OBJECT_DINO_REVISION:-f205d5d8e640a89a2b8ef0369670dfc37cc07fc2}
+      OBJECT_REMBG_MODEL: ${OBJECT_REMBG_MODEL:-u2net}
+      HF_HOME: /models/hf
+      U2NET_HOME: /models/u2net
+      PYTHONPATH: /app:/opt/triposr:/opt
+    volumes:
+      - triposr_model_cache:/models
+    networks:
+      - internal
+
   object-worker:
-    build: *backend-build
-    image: mogen-api:dev
+    build: *object-worker-build
+    image: mogen-object-worker:dev
     restart: unless-stopped
-    # Phase 4 worker environment only: it claims and tracks tasks. The TripoSR
-    # pipeline and its GPU image arrive in Phase 5 (08 Sections 3.5 and 4.3).
+    # `--pool=solo` keeps one process per GPU: the model is loaded once and is
+    # never forked, which is what CUDA requires. `--include` is what imports
+    # app/tasks/object_pipeline.py and therefore registers the TripoSR pipeline
+    # through the Phase 4 `register_pipeline` hook.
     command:
       - celery
       - -A
@@ -179,8 +226,8 @@ services:
       - worker
       - -Q
       - object_generation
-      - --concurrency=${OBJECT_WORKER_CONCURRENCY:-1}
-      - --prefetch-multiplier=1
+      - --pool=solo
+      - --include=app.tasks.object_pipeline
       - --loglevel=${LOG_LEVEL:-INFO}
     environment:
       APP_ENV: ${APP_ENV:-development}
@@ -194,8 +241,36 @@ services:
       TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-300}
       TASK_HEARTBEAT_SECONDS: ${TASK_HEARTBEAT_SECONDS:-30}
       OBJECT_TASK_TIME_LIMIT_SECONDS: ${OBJECT_TASK_TIME_LIMIT_SECONDS:-3600}
+      # CPU-only default for the base file; compose.gpu.yaml forces cuda:0.
+      OBJECT_GENERATION_ENABLED: ${OBJECT_GENERATION_ENABLED:-true}
+      OBJECT_MODEL_ID: ${OBJECT_MODEL_ID:-stabilityai/TripoSR}
+      OBJECT_MODEL_REVISION: ${OBJECT_MODEL_REVISION:-5b521936b01fbe1890f6f9baed0254ab6351c04a}
+      OBJECT_MODEL_DIR: ${OBJECT_MODEL_DIR:-/models/triposr}
+      OBJECT_MODEL_SHA256: ${OBJECT_MODEL_SHA256:-429e2c6b22a0923967459de24d67f05962b235f79cde6b032aa7ed2ffcd970ee}
+      OBJECT_DINO_MODEL_ID: ${OBJECT_DINO_MODEL_ID:-facebook/dino-vitb16}
+      OBJECT_DINO_REVISION: ${OBJECT_DINO_REVISION:-f205d5d8e640a89a2b8ef0369670dfc37cc07fc2}
+      OBJECT_DEVICE: ${OBJECT_DEVICE:-cpu}
+      OBJECT_ALLOW_CPU_FALLBACK: ${OBJECT_ALLOW_CPU_FALLBACK:-true}
+      OBJECT_CHUNK_SIZE: ${OBJECT_CHUNK_SIZE:-8192}
+      OBJECT_MC_RESOLUTION: ${OBJECT_MC_RESOLUTION:-256}
+      OBJECT_REMOVE_BACKGROUND: ${OBJECT_REMOVE_BACKGROUND:-true}
+      OBJECT_FOREGROUND_RATIO: ${OBJECT_FOREGROUND_RATIO:-0.85}
+      OBJECT_OUTPUT_FORMAT: ${OBJECT_OUTPUT_FORMAT:-glb}
+      OBJECT_BAKE_TEXTURE: ${OBJECT_BAKE_TEXTURE:-false}
+      OBJECT_TEXTURE_RESOLUTION: ${OBJECT_TEXTURE_RESOLUTION:-2048}
+      OBJECT_MAX_TASK_SECONDS: ${OBJECT_MAX_TASK_SECONDS:-900}
+      OBJECT_WORKER_CONCURRENCY: ${OBJECT_WORKER_CONCURRENCY:-1}
+      OBJECT_REMBG_MODEL: ${OBJECT_REMBG_MODEL:-u2net}
+      OBJECT_INPUT_SIZE: ${OBJECT_INPUT_SIZE:-512}
+      OBJECT_WORK_DIR: ${OBJECT_WORK_DIR:-/tmp/mogen-object-generation}
+      HF_HOME: /models/hf
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      U2NET_HOME: /models/u2net
+      PYTHONPATH: /app:/opt/triposr:/opt
     volumes:
       - app_data:/data
+      - triposr_model_cache:/models
     depends_on:
       db:
         condition: service_healthy
@@ -203,25 +278,30 @@ services:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
+      model-init:
+        condition: service_completed_successfully
     healthcheck:
+      # The model is loaded during worker startup, so the start period is
+      # deliberately generous. A ping proves the worker answers on its queue.
       test:
         - CMD-SHELL
         - >-
           celery -A app.tasks.celery_app:celery_app inspect ping
-          -d celery@$$HOSTNAME --timeout 5
+          -d celery@$$HOSTNAME --timeout 10
       interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 20s
+      timeout: 20s
+      retries: 5
+      start_period: 600s
     networks:
       - internal
 
   scene-worker:
-    build: *backend-build
-    image: mogen-api:dev
+    build: *scene-worker-build
+    image: mogen-scene-worker:dev
     restart: unless-stopped
-    # Phase 4 worker environment only: the COLMAP/OpenMVS image is Phase 6
-    # (08 Sections 3.6 and 4.4).
+    # Dedicated COLMAP/OpenMVS image. `--include` imports
+    # app/tasks/scene_pipeline.py, which verifies the external executables and
+    # registers the pipeline through the Phase 4 `register_pipeline` hook.
     command:
       - celery
       - -A
@@ -231,6 +311,7 @@ services:
       - scene_reconstruction
       - --concurrency=${SCENE_WORKER_CONCURRENCY:-1}
       - --prefetch-multiplier=1
+      - --include=app.tasks.scene_pipeline
       - --loglevel=${LOG_LEVEL:-INFO}
     environment:
       APP_ENV: ${APP_ENV:-development}
@@ -244,6 +325,29 @@ services:
       TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-300}
       TASK_HEARTBEAT_SECONDS: ${TASK_HEARTBEAT_SECONDS:-30}
       SCENE_TASK_TIME_LIMIT_SECONDS: ${SCENE_TASK_TIME_LIMIT_SECONDS:-7200}
+      SCENE_RECONSTRUCTION_ENABLED: ${SCENE_RECONSTRUCTION_ENABLED:-true}
+      SCENE_COLMAP_EXECUTABLE: ${SCENE_COLMAP_EXECUTABLE:-/usr/local/bin/colmap}
+      SCENE_OPENMVS_BIN_DIR: ${SCENE_OPENMVS_BIN_DIR:-/usr/local/bin/OpenMVS}
+      SCENE_WORK_DIR: ${SCENE_WORK_DIR:-/data/work/scene}
+      # CPU default for the base file; compose.gpu.yaml forces GPU COLMAP.
+      SCENE_COLMAP_USE_GPU: ${SCENE_COLMAP_USE_GPU:-false}
+      SCENE_MATCHING_STRATEGY: ${SCENE_MATCHING_STRATEGY:-EXHAUSTIVE}
+      SCENE_COLMAP_MAX_FEATURES: ${SCENE_COLMAP_MAX_FEATURES:-8192}
+      SCENE_COLMAP_CAMERA_MODEL: ${SCENE_COLMAP_CAMERA_MODEL:-SIMPLE_RADIAL}
+      SCENE_MAX_IMAGE_SIZE: ${SCENE_MAX_IMAGE_SIZE:-2000}
+      SCENE_MAX_THREADS: ${SCENE_MAX_THREADS:-4}
+      SCENE_OPENMVS_USE_CUDA: ${SCENE_OPENMVS_USE_CUDA:-false}
+      SCENE_ENABLE_MESH_REFINEMENT: ${SCENE_ENABLE_MESH_REFINEMENT:-true}
+      SCENE_ENABLE_TEXTURE_GENERATION: ${SCENE_ENABLE_TEXTURE_GENERATION:-true}
+      SCENE_MIN_REGISTERED_IMAGES: ${SCENE_MIN_REGISTERED_IMAGES:-3}
+      SCENE_MIN_REGISTRATION_RATIO: ${SCENE_MIN_REGISTRATION_RATIO:-0.5}
+      SCENE_MIN_SPARSE_POINTS: ${SCENE_MIN_SPARSE_POINTS:-100}
+      SCENE_MIN_DENSE_POINTS: ${SCENE_MIN_DENSE_POINTS:-100}
+      SCENE_MAX_TASK_SECONDS: ${SCENE_MAX_TASK_SECONDS:-14400}
+      SCENE_COLMAP_TIMEOUT_SECONDS: ${SCENE_COLMAP_TIMEOUT_SECONDS:-3600}
+      SCENE_OPENMVS_TIMEOUT_SECONDS: ${SCENE_OPENMVS_TIMEOUT_SECONDS:-5400}
+      SCENE_EXPORT_TIMEOUT_SECONDS: ${SCENE_EXPORT_TIMEOUT_SECONDS:-1800}
+      SCENE_OUTPUT_FORMAT: ${SCENE_OUTPUT_FORMAT:-GLB}
     volumes:
       - app_data:/data
     depends_on:
@@ -254,15 +358,17 @@ services:
       migration:
         condition: service_completed_successfully
     healthcheck:
+      # A ping proves the worker answers on the scene queue after the startup
+      # toolchain check; the image build already proved the binaries start.
       test:
         - CMD-SHELL
         - >-
           celery -A app.tasks.celery_app:celery_app inspect ping
-          -d celery@$$HOSTNAME --timeout 5
+          -d celery@$$HOSTNAME --timeout 10
       interval: 30s
-      timeout: 15s
+      timeout: 20s
       retries: 3
-      start_period: 20s
+      start_period: 30s
     networks:
       - internal
 
