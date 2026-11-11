@@ -2,12 +2,22 @@
 
 **Purpose:** everything a new session needs to continue this project without re-deriving context. Read this first, then [`AI_DEVELOPMENT_GUIDE.md`](AI_DEVELOPMENT_GUIDE.md) and the roadmap.
 
-Last updated: 2026-11-09.
+Last updated: 2026-11-11.
 
-> **Continue with:** Phase 9 (comprehensive testing and quality assurance), see Section 9, "Next: Phase 9".
+> **Continue with:** Phase 10 is complete and the MVP is released (1.0.0). The
+> next work is post-MVP Section 11 of the roadmap; no Phase 11 implementation has
+> started.
 > **Ready-to-paste continuation prompt:** [`NEXT_SESSION.md`](NEXT_SESSION.md).
-> **Confirm first:** the Phase 8 baseline (eleven-service stack — nine healthy, `migration` and `model-init` `Exited (0)`; 509 backend tests; 130 frontend tests; 75 scene ML unit tests plus the skipped opt-in real-reconstruction test; 35 object ML unit tests plus the opt-in real-model test; object worker healthy with the real TripoSR model loaded; scene worker healthy with COLMAP 4.2.1 and OpenMVS 2.4.0 detected; dispatcher and recovery heartbeats fresh; backend lint/format and `alembic check` clean).
-> **Detailed plan:** Section 9, "Phase 8 — reliability, security and optimization (complete)" and "Next: Phase 9".
+> **Confirm first:** the Phase 10 baseline (nine development services healthy plus
+> `migration` and `model-init` `Exited (0)`; 525 backend tests; 148 frontend tests;
+> 75 scene ML tests plus the skipped opt-in real-reconstruction test; 35 object ML
+> tests plus the opt-in real-model test; three worker pings; `cleanup_sessions_task`
+> and the retention task registered; fresh dispatcher/recovery heartbeat files;
+> object worker with the real TripoSR model; scene worker with COLMAP 4.2.1 and
+> OpenMVS 2.4.0; production images `:1.0.0` built and deployment-verified;
+> repository Playwright E2E suite 17/17 against the production HTTPS stack).
+> **Detailed plan:** Section 9, "Phase 8 ... (complete)", "Phase 9 ... (complete)"
+> and "Phase 10 — MVP release and documentation (complete)".
 > **Copy-paste prompt and resume checklist:** Section 10 and [`NEXT_SESSION.md`](NEXT_SESSION.md).
 
 ---
@@ -22,7 +32,13 @@ Phase 5 is complete at its roadmap scope. A dedicated `mogen-object-worker:dev` 
 
 Phase 7 is complete at its roadmap scope. The unified Three.js viewer (React Three Fiber `9.8.2`, Drei `10.7.9`, Three.js `0.187.0`, pinned exactly) is an independent `frontend/src/features/model-viewer/` module used by the new protected route `/projects/{id}/result`. It reads the current result through the existing `GET /result` API, downloads the GLB through the authenticated `GET /download` endpoint, loads it through a temporary blob URL and `GLTFLoader`, centres it without altering the asset, and disposes geometry, materials and textures on result change and unmount. OrbitControls provide rotate, zoom and pan; the toolbar adds reset, fit-to-view, grid, background and fullscreen. The information panel shows project name, generation type, status, source-image count, format, file size, creation date and mesh/vertex/polygon/material/texture counts. Empty, processing and failed-regeneration states are explicit and keep the previous successful result visible. Both a real TripoSR object (23 039 vertices / 45 983 triangles, vertex colours) and the real COLMAP/OpenMVS scene (202 493 vertices / 297 813 triangles, one embedded texture) loaded and were inspected in the application viewer in Edge; both downloads matched the stored SHA-256. Frontend suite: **130 passed** across 22 files, including 35 viewer cases with a real GLB fixture.
 
-Phase 8 is complete at its roadmap scope: authentication and file-security verification, generation reliability and recovery, data consistency, resource management, the performance baseline and infrastructure reliability (tasks 8.1–8.8). No Phase 9 work was started and no Phase 2–7 behaviour was re-opened. Six findings became fixes: (1) a **stale identity-map read** in `TaskExecutionService` could hide a cancellation request written after the worker claimed the task, so a project deleted mid-generation could still register a result — terminal transitions now refresh the task row (`get_for_update(populate_existing=True)`, `get_refreshed`); (2) **superseded result files were never deleted** after a successful regeneration, so every retry leaked a GLB — registration now queues a `FILE` cleanup job and `cleanup.requested` event in the same transaction; (3) **failed scene workspaces accumulated without bound** — a retention sweep now queues expired terminal workspaces for deletion and logs temporary-storage usage; (4) **scene toolchain probes wrote OpenMVS log files into the worker's CWD** — `verify_toolchain` now runs `--help` in a throwaway directory; (5) the **backup/restoration procedure was undocumented** — now in `docs/operations/` with a runnable consistency checker; (6) **backend API tests could write uploads into the live `/data` volume** — test clients now default to `/tmp/mogen-test-storage`. Phase 8 added 18 backend cases (509 total) and one scene-ML case (75 + the skipped opt-in test), live Redis/PostgreSQL outage drills, a PostgreSQL + file-storage backup/restore drill with identical counts and SHA-256, and a measured performance baseline. The full evidence table is in [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md).
+Phase 8 is complete at its roadmap scope: authentication and file-security verification, generation reliability and recovery, data consistency, resource management, the performance baseline and infrastructure reliability (tasks 8.1–8.8). No Phase 9 work was started during Phase 8, and no Phase 2–7 behaviour was re-opened. Six findings became fixes: (1) a **stale identity-map read** in `TaskExecutionService` could hide a cancellation request written after the worker claimed the task, so a project deleted mid-generation could still register a result — terminal transitions now refresh the task row (`get_for_update(populate_existing=True)`, `get_refreshed`); (2) **superseded result files were never deleted** after a successful regeneration, so every retry leaked a GLB — registration now queues a `FILE` cleanup job and `cleanup.requested` event in the same transaction; (3) **failed scene workspaces accumulated without bound** — a retention sweep now queues expired terminal workspaces for deletion and logs temporary-storage usage; (4) **scene toolchain probes wrote OpenMVS log files into the worker's CWD** — `verify_toolchain` now runs `--help` in a throwaway directory; (5) the **backup/restoration procedure was undocumented** — now in `docs/operations/` with a runnable consistency checker; (6) **backend API tests could write uploads into the live `/data` volume** — test clients now default to `/tmp/mogen-test-storage`. Phase 8 added 18 backend cases (509 total) and one scene-ML case (75 + the skipped opt-in test), live Redis/PostgreSQL outage drills, a PostgreSQL + file-storage backup/restore drill with identical counts and SHA-256, and a measured performance baseline. The full evidence table is in [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md).
+
+Phase 9 is complete at its roadmap scope (tasks 9.1–9.7): the full frontend, backend, ML, end-to-end, security and performance matrix was executed and the two Phase 8 open items were decided and implemented. Auth rate limiting is now an in-process fixed-window limiter for `POST /auth/login` and `POST /auth/register` (`AUTH_RATE_LIMIT_*`, 10/minute, `429 RATE_LIMITED` with `Retry-After`); Redis was deliberately not used so the API still accepts requests during a broker outage (`INF-AC-23`). `cleanup_sessions_task` now runs hourly on the cleanup worker's beat and removes only expired/revoked sessions (`SESSION_CLEANUP_INTERVAL_SECONDS`). A repository Playwright suite (`e2e/`, 17 tests; working tree, not yet git-committed) covers registration/login/logout, project creation/listing/deletion, both real generation workflows with viewer interaction and download, failure/retry, deletion during processing, two-user isolation, CSRF and upload validation. The `TEST-AC-19` gate is present as three GitHub Actions workflow files in the working tree (`ci.yml` fast gate, `e2e.yml` browser, `ml-validation.yml` self-hosted GPU); every command was executed locally but no remote CI runner exists in this environment. Frontend coverage tooling was added (`@vitest/coverage-v8`), with new DTO-mapper and API-client interceptor tests. Final counts: **525 backend tests** (339 database/API, 178 unit, 8 API-shell; 87.80% line coverage), **148 frontend tests** (24 files; 71.47% line coverage), **75 scene ML + 1 skipped**, **35 object ML + 1 skipped**, **17/17 E2E**. Real evidence: opt-in TripoSR real-model test passed; real 11-image COLMAP/OpenMVS reconstruction completed in 406.2 s through the worker; object generation 7.6 s for both a 480×360 and a 987×1481 photograph; viewer load ~1.0 s; Khronos glTF Validator 0 errors/0 warnings for object and 100-image scene assets. No critical defect was found; the viewer, result/download contract, outbox and reconstruction pipelines were not changed. The full evidence table and the known limitations (per-process rate limiter, frontend business-logic coverage shortfall, dataset-dependent scene E2E, unobserved remote CI) are in [`reviews/phase9_closeout.md`](reviews/phase9_closeout.md).
+
+Phase 10 is complete at its roadmap scope (tasks 10.1–10.6): the MVP is packaged and released as 1.0.0. `compose.prod.yaml` builds runtime images behind a pinned nginx TLS reverse proxy (only 80/443 published), sets `APP_ENV=production`, disables API docs, enforces Secure cookies and the production CSRF secret, separates Celery beat from the cleanup worker, and adds a scheduled backup service. The production stack was built, deployed and verified: registration/login, project creation, uploads, a real TripoSR object task, a real 11-image COLMAP/OpenMVS reconstruction (7.7 min), the browser viewer, authenticated GLB download, failure/retry and delete-during-processing. The full Playwright suite passed **17/17 against the production HTTPS stack**, the live auth limiter returned 429 with `Retry-After` after 10 attempts, API docs answered 404, and only the proxy ports were reachable. Data preservation was proved by identical counts (2 users, 19 projects, 17 tasks, 10 results, 141 images) and an unchanged current-result SHA-256 before and after deployment. The scheduled backup service ran and its dump/archive were restored into a scratch database and storage tree with matching counts and SHA-256. `docs/deployment.md`, `docs/developer_guide.md`, `docs/user_guide.md`, `docs/api.md`, `docs/releases/v1.0.0.md` and [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md) record the configuration, procedures, versions and evidence. One production-packaging defect was found and fixed: Kombu's Redis transport imports `packaging`, which the isolated scene-worker venv lacked while the development image obtained it through `pytest`; `packaging==26.3` is now pinned explicitly and the API/scene images rebuilt. The viewer, result/download contract, outbox and reconstruction pipelines were not changed. `M9` (MVP Released) is achieved.
+
+Phase 10 was the last MVP phase. Post-MVP improvements belong to Section 11 (Future Development) of the roadmap and have not been started.
 
 ---
 
@@ -53,6 +69,8 @@ mogen/
 │   └── workers/              placeholder
 ├── infrastructure/           empty placeholders (docker, nginx, scripts)
 ├── tests/                    placeholder for cross-component tests
+├── e2e/                      Playwright browser suite (Phase 9, working tree)
+├── .github/workflows/        CI quality gate, E2E and ML-validation workflows (Phase 9)
 ├── compose.yaml              development stack, eleven services
 ├── compose.gpu.yaml          GPU reservation for the object and scene workers
 ├── .dockerignore             ML worker build context
@@ -60,7 +78,7 @@ mogen/
 └── README.md
 ```
 
-What is real: `backend/`, `frontend/`, `ml/object_generation/`, `ml/scene_reconstruction/`, `compose.yaml`, `compose.gpu.yaml`, `.dockerignore`, `.env.example`, all of `docs/`.
+What is real: `backend/`, `frontend/`, `ml/object_generation/`, `ml/scene_reconstruction/`, `e2e/`, `.github/workflows/`, `compose.yaml`, `compose.gpu.yaml`, `.dockerignore`, `.env.example`, all of `docs/`.
 What is a placeholder: `ml/workers/`, `infrastructure/`, and `tests/` (`.gitkeep` only).
 
 Key backend files:
@@ -100,6 +118,8 @@ Key backend files:
 | `backend/app/api/v1/endpoints/results.py` | `GET /projects/{id}/result` and `GET /projects/{id}/download` |
 | `backend/app/storage/` | `StorageBackend` interface, `LocalStorage` backend, storage-key validation and root containment |
 | `backend/app/core/security.py` | Argon2id hashing, session-token hashing, signed session-bound CSRF tokens |
+| `backend/app/core/rate_limit.py` | In-process fixed-window auth limiter (`AUTH_RATE_LIMIT_*`) |
+| `backend/app/services/session_cleanup_service.py` | Hourly deletion of expired/revoked sessions |
 | `backend/app/schemas/` | Pydantic request/response models (auth, user, project, image and generation) |
 | `backend/app/api/v1/endpoints/auth.py` | Register, login, logout, current user, CSRF endpoints and cookie handling |
 | `backend/app/api/v1/endpoints/projects.py` | Project create, list, detail and delete endpoints |
@@ -201,7 +221,9 @@ Key ML files:
 | `task-recovery` | `mogen-api:dev` | — | Standalone stale-task recovery loop; health: `/tmp/task-recovery.heartbeat` freshness |
 | `frontend` | `mogen-frontend:dev` | 5173 | health: `wget --spider /` |
 
-All application images run as unprivileged users (`appuser` uid 1000 for the API/cleanup workers, `ubuntu` uid 1000 for the object and scene workers, `node` uid 1000 for the frontend). The object worker's base image already provides UID 1000 as `ubuntu`; the scene worker's COLMAP base image does as well, so the shared `app_data` volume stays writable by all.
+**Production overlay (1.0.0).** `compose.prod.yaml` layers on `compose.yaml` (plus `compose.gpu.yaml` for GPU) and builds `mogen-api:1.0.0`, `mogen-object-worker:1.0.0`, `mogen-scene-worker:1.0.0`, `mogen-frontend:1.0.0` (nginx production stage) and `mogen-backup:1.0.0`. Only `frontend` publishes `${PUBLIC_HTTP_PORT:-80}`/`${PUBLIC_HTTPS_PORT:-443}`; PostgreSQL, Redis, the API and workers are internal. The stack also runs a dedicated `beat` service and a `backup` service (`BACKUP_INTERVAL_SECONDS`, default daily). Start it with `docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml -f compose.gpu.yaml up -d --build`; see [`deployment.md`](deployment.md). The development stack is the one currently running in this workspace.
+
+The development application images run as unprivileged users (`appuser` uid 1000 for the API/cleanup workers, `ubuntu` uid 1000 for the object and scene workers, `node` uid 1000 for the frontend). The object worker's base image already provides UID 1000 as `ubuntu`; the scene worker's COLMAP base image does as well, so the shared `app_data` volume stays writable by all. In the production overlay the backend and ML images keep the same UID 1000 users, while the nginx frontend starts its master as root to bind 80/443 and read the mounted TLS key (its worker processes run as `nginx`), and the backup container runs as root to read `/data` and write the host backup mount. These two exceptions are documented in `docs/deployment.md`; do not mount the Docker socket into any of them.
 
 Frontend routes: `/`, `/login`, `/register`, `/dashboard`, `/projects/new`, `/projects/{id}`, `/projects/{id}/result`. The dashboard, creation, details and result routes are protected and redirect unauthenticated users to `/login`; the backend still enforces authentication and ownership on every call. The UI language is Russian. The browser reaches the API through the same-origin `/api` proxy, so the session cookie and CSRF flow work without CORS.
 
@@ -287,19 +309,44 @@ curl http://127.0.0.1:8000/health/ready
 curl http://127.0.0.1:8000/health/dependencies
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5173/
 curl -s http://127.0.0.1:5173/api/v1/probe   # JSON 404 from uvicorn proves the proxy
-docker compose run --rm --no-deps api pytest        # 509 passed (332 are database/API integration tests)
+docker compose exec cleanup-worker sh -c 'celery -A app.tasks.celery_app:celery_app inspect registered -d celery@$HOSTNAME --timeout 5'  # includes cleanup_sessions_task
+docker compose run --rm --no-deps api pytest        # 525 passed (339 are database/API integration tests)
+docker compose run --rm --no-deps api pytest --cov=app --cov-report=term-missing # 87.8% lines
 docker compose run --rm --no-deps api ruff check .  # clean
-docker compose run --rm --no-deps api ruff format --check . # 112 files formatted
+docker compose run --rm --no-deps api ruff format --check . # 117 files formatted
 docker compose run --rm --no-deps api alembic check # no schema drift
+docker compose run --rm --no-deps api pip check     # no broken requirements
 docker run --rm mogen-object-worker:dev python -m pytest /opt/object_generation/tests -q # 35 passed, 1 skipped
 docker run --rm mogen-scene-worker:dev python -m pytest /opt/scene_reconstruction/tests -q # 75 passed, 1 skipped
 docker run --rm mogen-scene-worker:dev python -m scene_reconstruction.standalone --verify-tools # COLMAP 4.2.1 + OpenMVS 2.4.0
 docker run --rm mogen-frontend:dev npm run lint       # clean
 docker run --rm mogen-frontend:dev npm run typecheck  # clean
 docker run --rm mogen-frontend:dev npm run format:check # clean
-docker run --rm mogen-frontend:dev npm run test:run   # 130 passed
+docker run --rm mogen-frontend:dev npm run test:run   # 148 passed
+docker run --rm mogen-frontend:dev npm run test:coverage # 71.5% lines
 docker run --rm mogen-frontend:dev npm run build      # succeeds
 ```
+
+The production release was verified separately on 2026-11-11; the reproducible
+checks are:
+
+```bash
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config -q
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml -f compose.gpu.yaml up -d --build
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml -f compose.gpu.yaml ps -a
+curl -k https://localhost/health/ready
+curl -k https://localhost/health/dependencies
+curl -k -o /dev/null -w "%{http_code}\n" https://localhost/docs        # 404
+cd e2e && E2E_BASE_URL=https://localhost E2E_IGNORE_HTTPS_ERRORS=true node node_modules/playwright/cli.js test
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml run --rm backup --once
+```
+
+Expected: production services healthy with `migration`/`model-init` `Exited (0)`,
+only `frontend` publishing 80/443, E2E **17/17**, and a backup directory with
+`database.dump`, `app-data.tgz`, `SHA256SUMS` and `manifest.json`. The E2E run
+needs `AUTH_RATE_LIMIT_ENABLED=false` and `E2E_SCENE_IMAGES`; restore the default
+limiter afterwards. Full evidence is in
+[`reviews/phase10_closeout.md`](reviews/phase10_closeout.md).
 
 The opt-in real-model test is separate and needs the GPU plus the populated cache:
 
@@ -324,13 +371,13 @@ If a check fails, fix the baseline before starting new work.
 
 On Windows PowerShell, `curl` resolves to `curl.exe`: use `NUL` instead of `/dev/null`, and `${PWD}` for the working directory in `-v` mounts.
 
-Current suite breakdown: 509 backend cases = 332 database/API integration cases under `tests/db` (they create their own scratch databases), 169 unit cases and 8 API-shell cases. Phase 8 added 18 cases: superseded-result cleanup 2, reliability regressions 3 (database failure during result registration, interrupted worker recovered and retried, project deletion during processing), scene-workspace retention 9, dispatcher crash-after-publish 1, cross-session CSRF binding 1, workspace-retention Celery schedule 1 and retention settings 1. Phase 6 added 10 cases: scene generation/task integration 3 and scene settings 7.
+Current suite breakdown: 525 backend cases = 339 database/API integration cases under `tests/db` (they create their own scratch databases), 178 unit cases and 8 API-shell cases. Phase 10 added no new backend cases: it packages the same behaviour and its deployment/backup checks are integration evidence, not unit tests. Phase 9 added 16 cases: rate-limiter unit 6, auth rate-limit API 4, session cleanup 3, session-cleanup Celery route/beat 1 and new settings 2. Phase 8 added 18 cases: superseded-result cleanup 2, reliability regressions 3, scene-workspace retention 9, dispatcher crash-after-publish 1, cross-session CSRF binding 1, workspace-retention Celery schedule 1 and retention settings 1. Phase 6 added 10 cases: scene generation/task integration 3 and scene settings 7. Backend coverage is **87.80%** of 3 508 statements (428 missed).
 
 ML suites: **35** object-generation unit cases plus the opt-in real TripoSR test, and **75** scene-reconstruction cases plus one skipped opt-in real-reconstruction test in `ml/scene_reconstruction/tests`. The scene tests cover dataset validation, duplicate/format/dimension rejection, COLMAP and OpenMVS command construction, COLMAP database statistics and pair-id decoding, sparse-model inspection/selection, GLB validation, OBJ→GLB repack, process timeouts/cancellation, preflight (including the no-log-in-CWD probe), checkpoint reuse and the real toolchain check.
 
-Frontend suite: **130** cases across 22 files (Vitest + React Testing Library). Phase 7 added the unified viewer module and the result page: 35 viewer cases (bounds, cleanup, loader, toolbar, viewer states, information panel and result page) plus a real triangle GLB fixture parsed with the same `GLTFLoader`; `ProjectDetailsPage` and `GenerationPanel` gained viewer-navigation assertions. The baseline 94 cases are unchanged. Run it with `docker run --rm mogen-frontend:dev npm run test:run` after rebuilding the image, or mount only `frontend/src` for iteration (Section 6).
+Frontend suite: **148** cases across 24 files (Vitest + React Testing Library), with **71.47%** line coverage. Phase 9 added the DTO-mapper (11) and API-client interceptor (7) cases and the `@vitest/coverage-v8` tooling. Phase 7 added the unified viewer module and the result page: 35 viewer cases (bounds, cleanup, loader, toolbar, viewer states, information panel and result page) plus a real triangle GLB fixture parsed with the same `GLTFLoader`; `ProjectDetailsPage` and `GenerationPanel` gained viewer-navigation assertions. Run it with `docker run --rm mogen-frontend:dev npm run test:run` after rebuilding the image, or mount only `frontend/src` for iteration (Section 6).
 
-Phase 7 browser verification is an out-of-tree proof (`.proof/viewer-tools/`, gitignored) using Playwright Core with the installed Edge: it logs in through the API, opens `/projects/{id}/result`, checks the canvas and model statistics, drags/zooms/resets/fits, toggles grid/background, downloads the GLB and compares its SHA-256 with the stored file. Object: 1.86 s to loaded, 45.6 fps, 23 039 vertices / 45 983 triangles, vertex colours. Medium scene: 1.82 s, 74.3 fps, 16 539 vertices / 28 991 triangles, one texture. Large scene: 2.43 s, 16.0 fps, 202 493 vertices / 297 813 triangles, one embedded texture. Headless Edge uses SwiftShader software WebGL, so the frame rates are software-renderer floors. The invalid-GLB error state and retry were verified in the same browser. Full evidence: [`reviews/phase7_closeout.md`](reviews/phase7_closeout.md).
+The browser verification is a repository Playwright suite (working tree, not yet git-committed) in [`e2e/`](../e2e/README.md) (17 tests, installed Edge locally, Chromium in CI). It covers registration/login/logout, project creation/listing/deletion, both real generation workflows (viewer load, orbit/zoom/fit/reset, download size and `glTF` magic), failure/retry, deletion during processing, two-user isolation, CSRF and upload validation. It passed **17/17 against the production HTTPS stack** on 2026-11-11 (`E2E_BASE_URL=https://localhost`, `E2E_IGNORE_HTTPS_ERRORS=true`, the Sceaux dataset, `AUTH_RATE_LIMIT_ENABLED=false`). The Phase 7 out-of-tree proof remains in `.proof/viewer-tools/`; Phase 9 performance evidence is in `.proof/phase9/` and Phase 10 deployment evidence in `.proof/phase10/evidence/`; the reports are [`reviews/phase9_closeout.md`](reviews/phase9_closeout.md) and [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md).
 
 ---
 
@@ -433,11 +480,43 @@ Rebuild (`docker compose build frontend`) and recreate the service before verify
 
 **The Phase 8 image rebuild can re-download shared CUDA layers.** `docker compose up -d --build` pulled several GB of CUDA base layers for the object and scene images even though the images existed, because BuildKit's layer cache did not contain them. It is slow but not a project failure; a later build reuses the layers. Budget 20–40 minutes if the builder cache was pruned.
 
-**Git state.** Branch `main`, zero commits; the Phase 2 files are staged and all later phase files are untracked. Phase 6 added `ml/scene_reconstruction/` (Dockerfile, requirements, config, dataset, runners, selector, mesh processor, exporter, validator, pipeline, standalone, tests, viewer validator), `backend/app/tasks/scene_pipeline.py`, `backend/tests/db/test_scene_generation.py`, `backend/tests/unit/test_scene_settings.py`, `docs/reviews/phase6_closeout.md`, `ml/object_generation/viewer/validate_glb.mjs`, the `.proof/` proof scripts (gitignored) and modified `backend/app/core/config.py`, `backend/app/services/result_service.py`, `backend/app/tasks/scene_pipeline.py`, `compose.yaml`, `compose.gpu.yaml`, `.env.example`, `.dockerignore`, `docs/HANDOFF.md`, `docs/NEXT_SESSION.md` and the frontend generation panel, labels and tests. The increment 2a–2h files (`app/db/models/`, `app/repositories/`, `app/services/`, `app/tasks/`, `app/storage/`, `app/schemas/`, the auth, project and image endpoints, `app/api/dependencies.py`, the initial migration, `tests/db/`, `tests/unit/test_repository_dependencies.py`, `tests/unit/test_security.py`, `tests/unit/test_project_validation.py`, `tests/unit/test_image_validation.py`, `tests/unit/test_storage.py`, `tests/unit/test_celery_config.py`) are untracked and not yet in the index. The Phase 2 close-out added `docs/reviews/phase2_closeout.md` (untracked) and modified the already staged `backend/app/main.py` and `backend/tests/api/test_errors.py`. Phase 3 added the frontend modules under `frontend/src/{app/layout,app/providers,app/router,features,pages,shared,test}` (untracked) and modified `frontend/package.json`, `frontend/package-lock.json`, `.env.example`, `compose.yaml` and the frontend README. Phase 4 added the new backend modules under `backend/app/{services,tasks,schemas,api/v1/endpoints}`, the new tests listed in Section 3, `docs/reviews/phase4_closeout.md` (all untracked) and modified `backend/app/core/config.py`, `backend/app/api/dependencies.py`, `backend/app/api/v1/router.py`, `backend/app/services/project_service.py`, `backend/app/services/image_service.py`, `backend/app/tasks/celery_app.py`, `backend/app/repositories/{outbox_repository,task_repository}.py`, `backend/tests/unit/test_celery_config.py`, `backend/tests/db/conftest.py`, `.env.example` and `compose.yaml`. Phase 5 added `ml/object_generation/` (Dockerfile, requirements, pipeline, tests, testdata, viewer), `backend/app/tasks/object_pipeline.py`, `backend/app/services/result_service.py`, `backend/app/schemas/result.py`, `backend/app/api/v1/endpoints/results.py`, `backend/tests/db/test_result_{api,persistence}.py`, `backend/tests/unit/test_result_service.py`, `compose.gpu.yaml`, `.dockerignore`, `docs/reviews/phase5_closeout.md` and the frontend `features/generation/` modules (all untracked), and modified `backend/app/tasks/generation_tasks.py`, `backend/app/services/task_execution_service.py`, `backend/app/api/dependencies.py`, `backend/app/api/v1/router.py`, `backend/app/core/config.py`, `backend/app/repositories/task_repository.py`, `.env.example`, `compose.yaml`, the frontend shared API/types/labels/config and `frontend/src/pages/ProjectDetailsPage/`. Do not assume a clean history; `git diff` against the index shows working-tree changes only. Do not stage, commit or rewrite history unless the user asks.
+**Auth rate limiting is in-process.** `FixedWindowRateLimiter` lives in `app/core/rate_limit.py` and is created per FastAPI app (`app.state.auth_rate_limiter`); it is not shared between processes. `POST /auth/login` and `POST /auth/register` return `429 RATE_LIMITED` with `Retry-After` after `AUTH_RATE_LIMIT_ATTEMPTS` (10) hits per `AUTH_RATE_LIMIT_WINDOW_SECONDS` (60), keyed by path and socket peer. Ordinary backend API tests disable it via `API_TEST_SETTINGS`; the dedicated tests enable it per client. Do not add a Redis dependency to the API to share counters: the API must keep working during a broker outage (`INF-AC-23`).
+
+**Session cleanup runs on the cleanup worker's beat.** `cleanup_sessions_task` is scheduled every `SESSION_CLEANUP_INTERVAL_SECONDS` (3600) and deletes only `expires_at <= now` and `revoked_at IS NOT NULL` rows. It never logs out an active session. Trigger it manually with `docker compose exec cleanup-worker celery -A app.tasks.celery_app:celery_app call cleanup_sessions_task`; the worker logs `session_cleanup_finished`.
+
+**The backend image contains the tests.** `docker compose run --rm --no-deps api pytest` uses the image copy of `app/` and `tests/`, not the host tree. After changing backend code or tests, rebuild `mogen-api:dev` (fast) before running the suite; use `docker run -v "${PWD}/backend:/app" …` only for iteration/linting. A formatted host file can differ from the image until the rebuild.
+
+**Frontend coverage needs a container copy-out.** `npm run test:coverage` writes `/app/coverage`. Do not bind-mount that directory: Vitest removes it and fails with `EBUSY`. Create a named container, start it, then `docker cp mogen-coverage:/app/coverage <host>` (the Phase 9 scripts do this). To iterate without rebuilding, mount both `frontend/src` and `frontend/vitest.config.ts`.
+
+**Repository E2E suite (working tree).** Run `node node_modules/playwright/cli.js test` from `e2e/` (Windows `npx` misquotes the CLI). Use `http://localhost:5173`, not `127.0.0.1` (CSRF origin), and disable the auth limiter for the stack (`AUTH_RATE_LIMIT_ENABLED=false`) because the suite registers many users from one address in seconds. The real scene test needs `E2E_SCENE_IMAGES` pointing at a directory of overlapping photographs; without it the test skips. Tests are serial (`workers: 1`) because they share one stack and one GPU.
+
+**CI workflow files are present but no CI remote exists here.** `.github/workflows/ci.yml` is the fast gate (it now also validates the production overlay, the nginx image and `nginx -t`); `e2e.yml` runs the browser smoke suite on a hosted runner and both real workflows on a self-hosted GPU runner; `ml-validation.yml` runs the real ML proofs. Validate the YAML and run the commands locally; do not claim automatic remote execution was observed.
+
+**Production overlay requires Compose ≥ 2.24.** `compose.prod.yaml` uses `!reset []` (remove the development host ports) and `!override` (replace the Vite frontend port). Older Compose versions reject those tags. The overlay also uses required-variable syntax (`${CSRF_SECRET:?…}`), so `docker compose config` fails until `.env.production` (or an explicit `--env-file`) supplies `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `CSRF_SECRET` and `PUBLIC_ORIGIN`.
+
+**The production frontend is the TLS reverse proxy.** `frontend` builds the nginx `production` stage and is the only published service. It serves the static SPA, redirects HTTP to HTTPS, proxies `/api/` and `/health/`, returns 404 for `/docs`/`/openapi.json`, and mounts `TLS_CERT_DIR` read-only at `/etc/nginx/certs` (`tls.crt`, `tls.key`). The self-signed helper is for local verification only; a real deployment installs a trusted certificate. HSTS is deliberately omitted for `localhost`/`127.0.0.1` so the development Vite server keeps working in the same browser profile.
+
+**The nginx proxy overwrites `X-Forwarded-For`.** It must not use `$proxy_add_x_forwarded_for`: the API trusts forwarded headers for the auth rate limiter, so appending a client-supplied value would let a caller rotate the limiter key. The proxy sets `X-Real-IP` and `X-Forwarded-For` to `$remote_addr`; `uvicorn` runs with `--proxy-headers --forwarded-allow-ips=*` because nginx is the only reachable peer.
+
+**The scene worker runtime needs `packaging`.** Kombu's Redis transport imports `packaging.version`. The development image got it transitively from `pytest`, which hid the gap in every earlier suite; the first production scene-worker runtime crashed with `ModuleNotFoundError: No module named 'packaging'`. `packaging==26.3` is now an explicit `backend/requirements.txt` pin. If the scene worker restarts with this error, the image predates the fix; rebuild it.
+
+**Re-pulling the PyTorch devel base is slow.** `mogen-object-worker:1.0.0` builds `torchmcubes` from `pytorch/pytorch:2.14.1-cuda12.6-cudnn9-devel` (a ~10 GB pull) and the devel image is not retained. Avoid unnecessary object-worker rebuilds; the object runtime and scene images are large. The production object image was built before the `packaging` pin but already contains packaging 26.3 (verified).
+
+**The database password changed locally.** The existing `postgres_data` volume was initialised with the development default; Phase 10 changed the `app` role password to the production secret so the same volume could be deployed. A gitignored `.env` now carries `POSTGRES_PASSWORD`/`DATABASE_URL` for the development stack, and `.env.production` carries the production values. Do not delete either file; a fresh deployment initialises the volume from `.env.production`.
+
+**Production verification artefacts are local.** `.env.production`, `infrastructure/certs/tls.{crt,key}` and `.backups/` are gitignored. The `backup` service writes timestamped directories with `database.dump`, `app-data.tgz`, `SHA256SUMS` and `manifest.json`; a host directory is not an off-host backup, so copy it away. The production E2E run needs `E2E_BASE_URL=https://localhost`, `E2E_IGNORE_HTTPS_ERRORS=true` (self-signed certificate), `E2E_SCENE_IMAGES`, and `AUTH_RATE_LIMIT_ENABLED=false` on the stack; restore the limiter afterwards.
+
+**The committed `plants-1.jpg` fixture is a PNG.** The backend and frontend correctly reject the extension/content mismatch, so E2E uses real JPEGs (`animal-2.jpg`, `car-1.jpg`, `car-2.jpg`) for failure scenarios and the performance script uploads it as `plants-1.png` with `image/png`. Do not rename Phase 5 test data casually.
+
+**Git state.** Branch `main` has three commits (`0349404`, `356ff10`, `7aa7269`); the working tree was clean when Phase 9 began and the Phase 9 changes are currently unstaged/untracked. Earlier phase notes below describe the historical index state. Phase 6 added `ml/scene_reconstruction/` (Dockerfile, requirements, config, dataset, runners, selector, mesh processor, exporter, validator, pipeline, standalone, tests, viewer validator), `backend/app/tasks/scene_pipeline.py`, `backend/tests/db/test_scene_generation.py`, `backend/tests/unit/test_scene_settings.py`, `docs/reviews/phase6_closeout.md`, `ml/object_generation/viewer/validate_glb.mjs`, the `.proof/` proof scripts (gitignored) and modified `backend/app/core/config.py`, `backend/app/services/result_service.py`, `backend/app/tasks/scene_pipeline.py`, `compose.yaml`, `compose.gpu.yaml`, `.env.example`, `.dockerignore`, `docs/HANDOFF.md`, `docs/NEXT_SESSION.md` and the frontend generation panel, labels and tests. The increment 2a–2h files (`app/db/models/`, `app/repositories/`, `app/services/`, `app/tasks/`, `app/storage/`, `app/schemas/`, the auth, project and image endpoints, `app/api/dependencies.py`, the initial migration, `tests/db/`, `tests/unit/test_repository_dependencies.py`, `tests/unit/test_security.py`, `tests/unit/test_project_validation.py`, `tests/unit/test_image_validation.py`, `tests/unit/test_storage.py`, `tests/unit/test_celery_config.py`) are untracked and not yet in the index. The Phase 2 close-out added `docs/reviews/phase2_closeout.md` (untracked) and modified the already staged `backend/app/main.py` and `backend/tests/api/test_errors.py`. Phase 3 added the frontend modules under `frontend/src/{app/layout,app/providers,app/router,features,pages,shared,test}` (untracked) and modified `frontend/package.json`, `frontend/package-lock.json`, `.env.example`, `compose.yaml` and the frontend README. Phase 4 added the new backend modules under `backend/app/{services,tasks,schemas,api/v1/endpoints}`, the new tests listed in Section 3, `docs/reviews/phase4_closeout.md` (all untracked) and modified `backend/app/core/config.py`, `backend/app/api/dependencies.py`, `backend/app/api/v1/router.py`, `backend/app/services/project_service.py`, `backend/app/services/image_service.py`, `backend/app/tasks/celery_app.py`, `backend/app/repositories/{outbox_repository,task_repository}.py`, `backend/tests/unit/test_celery_config.py`, `backend/tests/db/conftest.py`, `.env.example` and `compose.yaml`. Phase 5 added `ml/object_generation/` (Dockerfile, requirements, pipeline, tests, testdata, viewer), `backend/app/tasks/object_pipeline.py`, `backend/app/services/result_service.py`, `backend/app/schemas/result.py`, `backend/app/api/v1/endpoints/results.py`, `backend/tests/db/test_result_{api,persistence}.py`, `backend/tests/unit/test_result_service.py`, `compose.gpu.yaml`, `.dockerignore`, `docs/reviews/phase5_closeout.md` and the frontend `features/generation/` modules (all untracked), and modified `backend/app/tasks/generation_tasks.py`, `backend/app/services/task_execution_service.py`, `backend/app/api/dependencies.py`, `backend/app/api/v1/router.py`, `backend/app/core/config.py`, `backend/app/repositories/task_repository.py`, `.env.example`, `compose.yaml`, the frontend shared API/types/labels/config and `frontend/src/pages/ProjectDetailsPage/`. Do not assume a clean history; `git diff` against the index shows working-tree changes only. Do not stage, commit or rewrite history unless the user asks.
 
 **Phase 7 git state.** Phase 7 added everything under `frontend/src/features/model-viewer/` and `frontend/src/pages/ModelViewerPage/`, `docs/reviews/phase7_closeout.md`, the `.proof/` browser-proof scripts (gitignored) and modified `frontend/package.json`, `frontend/package-lock.json`, `frontend/src/app/router/AppRouter.tsx`, `frontend/src/pages/ProjectDetailsPage/ProjectDetailsPage.tsx` (and its test), `frontend/src/features/generation/components/GenerationPanel.tsx` (and its test), `frontend/src/features/projects/components/ProjectCard.tsx`, `frontend/src/shared/api/queryKeys.ts`, `docs/HANDOFF.md` and `docs/NEXT_SESSION.md`. All Phase 3–7 files remain untracked; the Phase 2 files are staged.
 
 **Phase 8 git state.** Phase 8 added `backend/app/services/workspace_retention_service.py`, `backend/tests/db/test_workspace_retention.py`, `backend/tests/db/test_reliability_regressions.py`, `docs/operations/backup_restore.md`, `docs/operations/verify_current_results.py`, `docs/reviews/phase8_closeout.md`, the `.proof/phase8/` drill and measurement scripts (gitignored, plus `.proof/phase8.jpg` and `.proof/phase8-big.jpg`) and modified `backend/app/services/task_execution_service.py`, `backend/app/repositories/task_repository.py`, `backend/app/tasks/cleanup_tasks.py`, `backend/app/tasks/celery_app.py`, `backend/app/core/config.py`, `backend/app/core/logging.py`, `backend/tests/db/conftest.py`, `backend/tests/db/test_result_persistence.py`, `backend/tests/db/test_outbox_dispatcher.py`, `backend/tests/db/test_auth_api.py`, `backend/tests/unit/test_celery_config.py`, `backend/tests/unit/test_config.py`, `ml/scene_reconstruction/preflight.py`, `ml/scene_reconstruction/tests/test_preflight.py`, `compose.yaml`, `.env.example`, `.dockerignore`, `README.md`, `docs/HANDOFF.md` and `docs/NEXT_SESSION.md`. It also removed 60 generated OpenMVS log files from `ml/scene_reconstruction/` and 54 test-created orphan storage directories from `/data/projects`. No migration was added (no schema change). All Phase 3–8 files remain untracked; the Phase 2 files are staged.
+
+**Phase 9 git state.** Phase 9 added `backend/app/core/rate_limit.py`, `backend/app/services/session_cleanup_service.py`, `backend/tests/unit/test_rate_limit.py`, `backend/tests/db/test_auth_rate_limit.py`, `backend/tests/db/test_session_cleanup.py`, `frontend/src/shared/api/mappers.test.ts`, `frontend/src/shared/api/client.test.ts`, the repository `e2e/` suite (working tree), `.github/workflows/{ci,e2e,ml-validation}.yml`, `docs/reviews/phase9_closeout.md` and the gitignored `.proof/phase9/` evidence/scripts. It modified `backend/app/core/config.py`, `backend/app/api/dependencies.py`, `backend/app/api/v1/endpoints/auth.py`, `backend/app/main.py`, `backend/app/tasks/celery_app.py`, `backend/app/tasks/cleanup_tasks.py`, `backend/tests/db/conftest.py`, `backend/tests/unit/test_celery_config.py`, `backend/tests/unit/test_config.py`, `compose.yaml`, `.env.example`, `frontend/package.json`, `frontend/package-lock.json`, `frontend/vitest.config.ts`, `.gitignore`, `docs/HANDOFF.md`, `docs/NEXT_SESSION.md` and `ml/object_generation/viewer/package-lock.json` was left untouched (the validator's `npm ci` only created gitignored `node_modules`). No migration was added. All Phase 9 files are unstaged; the repository has three commits and the pre-Phase 9 tree was clean.
+
+**Phase 10 git state.** Phase 10 added `compose.prod.yaml`, `frontend/nginx/default.conf`, the nginx `production` stage in `frontend/Dockerfile`, `infrastructure/backup/{Dockerfile,backup.sh}`, `infrastructure/certs/README.md`/`.gitkeep`, `infrastructure/scripts/generate-self-signed-cert.{ps1,sh}`, `.env.production.example`, `VERSION`, `docs/deployment.md`, `docs/developer_guide.md`, `docs/user_guide.md`, `docs/api.md`, `docs/releases/v1.0.0.md`, `docs/reviews/phase10_closeout.md` and the gitignored `.proof/phase10/` evidence. It modified `backend/app/core/config.py` (version 1.0.0), `backend/requirements.txt` (`packaging==26.3`), `.env.example`, `.gitignore`, `.github/workflows/ci.yml`, `e2e/playwright.config.ts`, `e2e/README.md`, `README.md`, `frontend/README.md`, `frontend/package.json`, `frontend/package-lock.json`, `docs/operations/backup_restore.md`, `docs/HANDOFF.md` and `docs/NEXT_SESSION.md`. Local-only, gitignored files created during deployment verification: `.env`, `.env.production`, `infrastructure/certs/tls.crt`/`tls.key` and `.backups/`. The production images are tagged `:1.0.0`; production containers were stopped and the development stack restored. No migration was added; no viewer, result/download, outbox or reconstruction-pipeline code was changed.
 
 ---
 
@@ -533,6 +612,18 @@ Do not re-litigate these without a reason.
 | Scene toolchain `--help` probes run in a throwaway directory because OpenMVS writes its log into the CWD | `ml/scene_reconstruction/preflight.py` |
 | Backup and restoration are documented in `docs/operations/backup_restore.md`; a runnable checker verifies that every active project's current result has a file of the recorded size | `docs/operations/` |
 | API test clients default to `storage_root=/tmp/mogen-test-storage`, so a test that forgets a storage override can never write uploads into the live `/data` volume | `backend/tests/db/conftest.py` |
+| Auth endpoints use an in-process fixed-window limiter (10/min per path and peer), returning `429 RATE_LIMITED` with `Retry-After`; Redis is deliberately not a dependency of the API request path | `backend/app/core/rate_limit.py`, `backend/app/api/dependencies.py`, `backend/app/main.py` |
+| Expired and revoked sessions are deleted hourly by `cleanup_sessions_task` on the cleanup worker; active sessions are never touched | `backend/app/services/session_cleanup_service.py`, `backend/app/tasks/cleanup_tasks.py`, `backend/app/tasks/celery_app.py` |
+| The fast CI gate is present in the working tree (backend/frontend/Compose); browser and real-ML pipelines are separate workflows requiring a hosted/self-hosted runner | `.github/workflows/ci.yml`, `e2e.yml`, `ml-validation.yml` |
+| Browser E2E is a repository Playwright suite (unstaged); it disables the auth limiter for the run and skips the scene test when no dataset is provided | `e2e/`, `e2e/README.md` |
+| Frontend coverage uses the official v8 provider; type-only modules are excluded | `frontend/vitest.config.ts`, `frontend/package.json` |
+| Production is a `compose.prod.yaml` overlay: runtime image targets, `APP_ENV=production`, `DEBUG=false`, API docs off, Secure cookies, required secrets, only nginx 80/443 published, bounded json-file logs | `compose.prod.yaml`, `docs/deployment.md`, `INF-AC-20` |
+| The production frontend is a pinned nginx image serving the Vite build and terminating TLS; `/docs`/`/openapi.json` are explicit 404s; HSTS is skipped for localhost | `frontend/Dockerfile`, `frontend/nginx/default.conf` |
+| The proxy overwrites `X-Forwarded-For` with the peer address because the API trusts forwarded headers for the rate limiter | `frontend/nginx/default.conf`, `compose.prod.yaml` |
+| Celery beat is a dedicated service in production; the cleanup worker no longer runs `--beat` | `compose.prod.yaml`, `08_infrastructure.md` Section 7 |
+| Backup is a scheduled `mogen-backup:1.0.0` service writing pg_dump + `/data/projects` archives with checksums and a manifest to `BACKUP_HOST_DIR`; retention is configurable | `infrastructure/backup/`, `compose.prod.yaml`, `docs/operations/backup_restore.md` |
+| `packaging==26.3` is pinned explicitly because Kombu's Redis transport imports it; the isolated scene-worker venv proved the dependency was undeclared | `backend/requirements.txt`, Phase 10 close-out F1 |
+| Application version 1.0.0 is recorded in `VERSION`, `Settings.version`, `APP_VERSION`, the frontend package and the release record | `VERSION`, `backend/app/core/config.py`, `docs/releases/v1.0.0.md` |
 
 ---
 
@@ -546,40 +637,43 @@ Do not re-litigate these without a reason.
 | Phase 5 object generation | Complete | Tasks 5.1–5.9 and the applicable `OBJ-AC`, `BE-AC-17/19/20`, `DB-AC-07/08/10..12`, `API-AC-09..14`, `INF-AC-08/13` and `TEST-AC-12/14` criteria verified; report in [`reviews/phase5_closeout.md`](reviews/phase5_closeout.md); 481 backend, 92 frontend and 32 ML tests; real standalone and live GPU generation |
 | Generation task creation/status, outbox insertion and dispatcher | Complete | `POST /projects/{id}/generate` (202/200), `GET /projects/{id}/status`, transactional outbox, dispatcher, workers, recovery; `BE-AC-13..16`, `API-AC-09..12`, `DB-AC-20..23` verified |
 | `compose.gpu.yaml` and dedicated ML worker images | Complete | Dedicated TripoSR and COLMAP/OpenMVS images are in use; the GPU override reserves one device for each worker |
-| Production frontend image (nginx, static build) | Deferred | Phase 4 of `08_infrastructure.md`; the Dockerfile already has a `build` stage |
+| Production frontend image (nginx, static build) | Complete | Task 10.1: pinned nginx production stage serves the static build, terminates TLS and proxies `/api/`/`/health/`; only 80/443 are published |
 | Generation UI, status polling and result link | Complete | The details page starts/retries generation, polls real status and links the authenticated download; the interactive viewer and result-management UI remain Phase 7 |
 | 3D viewer and result-management UI | Complete | Phase 7: unified R3F viewer, authorized GLB loading, controls, lighting, disposal, information panel, download and result management; report in [`reviews/phase7_closeout.md`](reviews/phase7_closeout.md) |
 | Phase 7 viewer and result management | Complete | Tasks 7.1–7.7 and the applicable `FE-AC-14..17/19`, `UI-AC-09..11/14`, `API-AC-13/14/16`, `INF-AC-02/07/15`, `TEST-AC-10/11` and `SCENE-AC-22` criteria verified; 130 frontend tests; real Edge proof against both asset types |
 | Phase 8 reliability, security and optimization | Complete | Tasks 8.1–8.8 and the applicable `AC-08/09/12/13`, `BE-AC-05/06/10/15/18/19/21/22/23`, `DB-AC-20/21/23`, `INF-AC-10/11/12/15/18/19/20/21/22/23/24/25`, `API-AC-12/13/15/16` and `TEST-AC-04/06/07/08/09/16/17/18` criteria verified; report in [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md); 509 backend tests, 130 frontend, 75 scene and 35 object ML; live Redis/PostgreSQL outage, API recreation, backup/restore and performance drills |
+| Phase 9 comprehensive testing and quality assurance | Complete | Tasks 9.1–9.7 and the applicable `AC-01..14` and `TEST-AC-01..20` criteria verified; report in [`reviews/phase9_closeout.md`](reviews/phase9_closeout.md); 525 backend, 148 frontend, 75 scene + 1 skipped, 35 object + 1 skipped, 17/17 E2E; real TripoSR and real 11-image COLMAP/OpenMVS runs; Khronos 0 errors; CI workflows, auth rate limiting and scheduled session cleanup delivered |
+| Phase 10 MVP release and documentation | Complete | Tasks 10.1–10.6 and all ten Phase 10 acceptance functions verified; report in [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md); release 1.0.0; production overlay/images, nginx TLS, Secure cookies, separate beat, scheduled backups, deployment verification (17/17 E2E against HTTPS, real object and 11-image scene), user/developer docs and release record; `M9` achieved |
 | Superseded result files | Complete | A successful regeneration queues a `FILE` cleanup job for the old GLB; a failed regeneration keeps it |
 | Scene workspace retention | Complete | Hourly `cleanup_scene_workspaces_task`; `SCENE_WORKSPACE_RETENTION_HOURS` (168 default, 0 disables); `workspace_usage` logged |
-| Backup and restoration documentation | Complete | [`operations/backup_restore.md`](operations/backup_restore.md) with executed PostgreSQL and file-storage drills and a runnable consistency checker |
+| Backup and restoration documentation | Complete | [`operations/backup_restore.md`](operations/backup_restore.md) with the scheduled `backup` service, executed PostgreSQL and file-storage restores, and a runnable consistency checker |
 | Performance baseline | Complete | API/upload/download/cleanup/viewer/memory measurements plus persisted TripoSR and COLMAP/OpenMVS stage timings; see the Phase 8 close-out |
 | Frontend bundle size | Known limitation | Three.js raises the production bundle to ~1.54 MB (436 kB gzip); Vite warns about the chunk. Route-level splitting is deferred |
-| Live object generation during Phase 7/8 | Environment note | A new OBJECT smoke task hung in `MODEL_GENERATION` under host GPU load in an unrelated workload; the test project was deleted and the worker restarted with its model loaded. Phase 8 did not run new inference for the same reason; GPU/RAM failures are covered by simulated stable codes and the recorded real runs |
-| Playwright E2E | Partially addressed | Phase 7 added an out-of-tree Playwright Core + installed-Edge proof (`.proof/`, gitignored) for both result types and the invalid-GLB state; Phase 8 reused Playwright for the viewer memory baseline; a committed Playwright suite in CI remains deferred |
+| Live object generation during Phase 7/8 | Historical environment note | A new OBJECT smoke task hung in `MODEL_GENERATION` under host GPU load in an unrelated workload; the test project was deleted and the worker restarted with its model loaded. Phase 8 did not run new inference for the same reason. Phase 9 ran real generations successfully (object E2E and performance runs); GPU/RAM failures remain covered by simulated stable codes and the recorded real runs |
+| Playwright E2E | Complete | Repository suite in `e2e/` (17 tests) covering auth, projects, security, both real generations, viewer interaction/download, failure/retry and deletion during processing; **17/17 passed against the production HTTPS stack** on 2026-11-11; the Phase 7/8 out-of-tree proofs remain in `.proof/` |
+| CI pipeline and coverage measurement | Implemented; remote execution not observed | `TEST-AC-19` is satisfied by workflow files in the working tree (`.github/workflows/ci.yml`, `e2e.yml`, `ml-validation.yml`); every command was executed locally. Backend coverage 87.80%, frontend 71.47%; shortfalls recorded in the Phase 9 close-out. No CI remote exists in this environment |
+| Rate limiting on auth endpoints | Implemented | In-process fixed-window limiter on login/register (10/min per path and peer), 429 `RATE_LIMITED` + `Retry-After`; live probe and 10 tests; per-process scope documented |
 | Phase 6 scene reconstruction | Complete | Tasks 6.1–6.9 and the applicable `SCENE-AC`, `BE-AC-17/19/20`, `DB-AC-07/08/10..12`, `API-AC-09..14`, `INF-AC-02/09/10/12/13/14/17` and `TEST-AC-13/14/18` criteria verified; report in [`reviews/phase6_closeout.md`](reviews/phase6_closeout.md); 491 backend, 94 frontend and 74 scene ML tests plus the real 11-image proof and live worker E2E |
-| CI pipeline and coverage measurement | Not started | `TEST-AC-19`, the only unmet `TEST-AC` after the Phase 2 review; coverage targets in `09_testing.md` Section 19; Phase 5 coverage 89% with the `generation_tasks` shortfall reported; Phase 8 did not add a pipeline |
-| Rate limiting on auth endpoints | Not implemented | API contract lists 429; needs shared counters (Redis) and middleware |
 | Cleanup-job processing | Implemented | The `cleanup-worker` claims `PENDING` jobs, deletes the target, records `COMPLETED`/`last_error`/`attempts` and retries until `CLEANUP_MAX_ATTEMPTS` |
 | Broker-driven cleanup dispatch | Complete | Image/project deletion insert a `cleanup.requested` outbox event; the dispatcher publishes it to `file_cleanup` and the cleanup worker processes the targeted job immediately. The beat scan remains the recovery path. |
-| Celery beat separation | Deferred | Development still runs `--beat` in the cleanup-worker container; production needs a dedicated beat service |
+| Celery beat separation | Complete | Production runs a dedicated `beat` service; the cleanup worker command no longer includes `--beat` (`compose.prod.yaml`) |
 | Expired processing artifacts | Complete | The scene-workspace retention sweep is the producer and remover of expired intermediate artifacts (`07` Section 15.7); object work dirs are removed on success and failure |
 | Worker health beyond the process | Partially complete | Workers answer `celery inspect ping`; the dispatcher and recovery prove their loops with heartbeat files. Task-level metrics, dead-letter handling and per-task health remain deferred |
-| Session cleanup scheduling | Not scheduled | `SessionRepository.delete_expired`/`delete_revoked` exist; a periodic job would fit the cleanup worker's beat schedule. A few expired rows are present, but the table is small |
+| Session cleanup scheduling | Complete | Hourly `cleanup_sessions_task` deletes expired and revoked sessions; live run removed 4 expired + 9 revoked and left 28 active |
 | Redis licensing (RSALv2/SSPLv1) | Open | Needs legal acceptance or an approved broker change; see `phase0_decisions.md` Section 8 |
 | Docker data root relocation | No longer required | The scene build fits on `C:`; the two ML images are large. Phase 8's rebuild re-downloaded shared CUDA layers, so keep an eye on free space before a cold rebuild |
-| First git commit | Pending | 82 files were staged at the Phase 2 close-out; every Phase 3–8 file listed in Section 6 is untracked |
-| `ml/`, `infrastructure/`, `tests/` directories | Partially real | `ml/object_generation/` and `ml/scene_reconstruction/` are the real workers; `ml/workers/`, `infrastructure/` and `tests/` remain placeholders |
+| First git commit | Partially resolved | The repository now has three commits; the Phase 9 and Phase 10 changes are unstaged/untracked. Do not stage or commit unless the user asks |
+| `ml/`, `infrastructure/`, `tests/` directories | Partially real | `ml/object_generation/` and `ml/scene_reconstruction/` are the real workers; `infrastructure/` now holds the backup image and certificate scripts; `ml/workers/` and `tests/` remain placeholders |
 | Failed scene workspaces | Bounded | `/data/work/scene/{task_id}` is kept after a failed task for diagnostics and pruned after `SCENE_WORKSPACE_RETENTION_HOURS` (default 168) unless set to 0. The retained Phase 6 workspace becomes eligible ~2026-11-14 |
+| Historical orphan storage directories | Known dev artifact | ~414 UUID-named directories (~204 MB) under `/data/projects` have no project row and predate Phase 9 (API tests before the `/tmp/mogen-test-storage` isolation). Verified against the `projects` table but not bulk-deleted; Phase 10 left them untouched and did not prune them. Remove only with per-directory verification |
 
 ---
 
-## 9. Phase 2–8 progress; next task
+## 9. Phase 2–10 progress; next task
 
-Phases 2, 3, 4, 5, 6, 7 and 8 are complete. The increments below record what was delivered; the Phase 2 close-out review is recorded at the end of the Phase 2 section, and the Phase 3, 4, 5, 6, 7 and 8 summaries and their close-out review links follow it. Phase 9 (comprehensive testing and quality assurance) is next.
+Phases 2, 3, 4, 5, 6, 7, 8, 9 and 10 are complete. The increments below record what was delivered; the Phase 2 close-out review is recorded at the end of the Phase 2 section, and the Phase 3–10 summaries and their close-out review links follow it. Phase 10 (MVP release and documentation) is complete and `M9` is achieved; the next work is a post-MVP Section 11 item.
 
-**Read first:** `05_database_specification.md` (all of it — it is the authority for this phase), `04_backend_specification.md` Sections 7 and 20, `api_contracts.md` for response shapes, `09_testing.md` Sections 7 and 8, and Phase 2 in `10_development_roadmap.md`.
+**Read first for post-MVP work:** the relevant specification, `10_development_roadmap.md` Section 11, [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md) and [`releases/v1.0.0.md`](releases/v1.0.0.md).
 
 ### Increment 2a — models and migration (complete)
 
@@ -841,15 +935,75 @@ Verified on 2026-11-09 against the running eleven-service stack, **509 passing b
 
 **Known limitations:** no new real generation was run (host GPU busy; the Phase 7 handoff forbids re-running it just to re-check delivery), so GPU/RAM failures are simulated and ML timing comes from persisted metadata and earlier real proofs; API latency includes the Vite proxy and process startup; browser figures use software WebGL; retention will prune the retained Phase 6 workspace after the default window; auth rate limiting, scheduled session cleanup and CI remain open; backups are documented and drilled but not scheduled.
 
-### Next: Phase 9 — comprehensive testing and quality assurance
+### Phase 9 — comprehensive testing and quality assurance (complete)
 
-**Read:** Phase 9 in `10_development_roadmap.md` (tasks 9.1–9.7), `09_testing.md` (all of it), `04_backend_specification.md`, `08_infrastructure.md`, `api_contracts.md` and [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md).
+Verified on 2026-11-10 against the running stack, **525 backend**, **148 frontend**, **75 scene ML + 1 skipped**, **35 object ML + 1 skipped** and **17/17 E2E** tests. The task-by-task, criterion-by-criterion, coverage, ML-quality, performance, security and limitation tables are in [`reviews/phase9_closeout.md`](reviews/phase9_closeout.md).
 
-Phase 9 executes the complete test matrix (frontend, backend, ML integration, end-to-end, security and performance), establishes the CI quality gate (`TEST-AC-19`), and produces the release-readiness assessment. Do not re-open Phases 2–8; reuse their suites, drills and `.proof/` scripts. Add the remaining product acceptance criteria (`AC-01..14` not already covered by real runs) and decide on rate limiting and session cleanup, which Phase 8 left open.
+**9.1 Frontend:** 148 cases across 24 files; lint, typecheck, format and build clean; 71.47% line coverage; new DTO-mapper and API-client interceptor cases.
+**9.2 Backend:** 525 passed (339 database/API, 178 unit, 8 API-shell); 87.80% line coverage; ruff/format/alembic/pip clean.
+**9.3 ML:** opt-in real TripoSR test passed; real 11-image COLMAP/OpenMVS reconstruction completed through the worker in 406.2 s with 233 543 dense points and a 31 573-face textured mesh; Khronos validator 0 errors/0 warnings for object and 100-image scene GLBs.
+**9.4 E2E:** repository Playwright suite 17/17; registration/login/logout, project lifecycle, both real generation workflows, status, viewer interaction, download, failure/retry, deletion during processing, recovery covered by backend tests and Phase 8 drills.
+**9.5 Security:** two-user isolation, CSRF (missing and cross-session), upload validation, traversal filename neutralization, private assets; live rate-limit probe 10×401 → 429; no critical issue.
+**9.6 Performance:** object 7.61 s (480×360) and 7.59 s (987×1481), viewer ~1.0 s, downloads 328–338 ms; 11-image scene 406.2 s; 100-image scene 3 719 s (persisted real Phase 8 run).
+**9.7 Fixes:** no critical product defect; the Phase 8 open items were decided (rate limiting and session cleanup implemented), CI/E2E/coverage tooling added, and the E2E fixture mismatch corrected.
 
-### Increments after that
+**Criteria:** all six Phase 9 acceptance criteria, `AC-01..AC-14`, `TEST-AC-01..TEST-AC-20` (with CI remote execution unobserved) and `M8` are satisfied. `M9` is not claimed; Phase 10 release engineering remains.
 
-Phase 10 (MVP release and documentation): production configuration, deployment verification, backup scheduling, user/developer documentation and a versioned release.
+### Phase 10 — MVP release and documentation (complete)
+
+Verified on 2026-11-11 against the production stack and the returned development
+stack. The task-by-task, criterion-by-criterion, deployment, backup, security and
+limitation tables are in [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md).
+
+**10.1 Release configuration:** `compose.prod.yaml` builds runtime images
+(`mogen-api:1.0.0`, `mogen-object-worker:1.0.0`, `mogen-scene-worker:1.0.0`,
+`mogen-frontend:1.0.0`, `mogen-backup:1.0.0`), publishes only nginx 80/443,
+sets `APP_ENV=production`/`DEBUG=false`/API docs off/Secure cookies/required
+secrets, adds a dedicated `beat`, bounded log rotation, TLS termination and the
+scheduled `backup` service. `frontend/nginx/default.conf`, `.env.production.example`
+and the certificate helpers were added.
+
+**10.2 Deployment verification:** production stack healthy with `migration` and
+`model-init` `Exited (0)`; only 80/443 reachable; HTTPS health checks, Secure
+cookies, 404 API docs; direct API smoke (register 201, auth/me, create project,
+upload and byte-identical private content, delete 202); real TripoSR object task
+(32.4 s through E2E) and real 11-image COLMAP/OpenMVS reconstruction (7.7 min
+through E2E); full viewer and authenticated GLB download; failure/retry and
+delete-during-processing; data preservation with identical counts and result
+SHA-256; live rate-limit probe 10×401 → 429. **Playwright 17/17 against
+`https://localhost`.**
+
+**10.3 Backups:** scheduled service produced pg_dump + `/data/projects`
+archives with checksums and a manifest; a final backup restored into a scratch
+database with identical counts (2/19/17/10/141) and a matching result SHA-256
+for the storage archive.
+
+**10.4 User documentation:** [`user_guide.md`](user_guide.md).
+
+**10.5 Developer documentation:** [`developer_guide.md`](developer_guide.md),
+[`deployment.md`](deployment.md), [`api.md`](api.md), updated `README.md`, env
+templates and CI production validation.
+
+**10.6 Release:** [`releases/v1.0.0.md`](releases/v1.0.0.md) records the
+application version, migration revision `1f302d830cf9`, model/tool pins and image
+identifiers. `VERSION` and `/health/live` report 1.0.0.
+
+**Finding fixed:** the production scene-worker runtime lacked `packaging`
+(Kombu's Redis transport imports it; the development image got it through
+`pytest`). `packaging==26.3` is now pinned explicitly and the API/scene images
+were rebuilt.
+
+**Criteria:** all ten Phase 10 acceptance functions, `AC-01..AC-14`,
+`INF-AC-01..25` at the Phase 10 scope, `TEST-AC-01..18/20` and the locally
+executed `TEST-AC-19` are satisfied; `M9` (MVP Released) is achieved.
+
+### Next: post-MVP (Section 11 of the roadmap)
+
+Phase 10 is the last MVP phase. No Phase 11 implementation has started and no
+Section 11 feature is in the working tree. Candidate post-MVP work is listed in
+`10_development_roadmap.md` Section 11: horizontal scaling, object storage,
+richer monitoring/dead-letter handling, route-level bundle splitting, shared
+rate limiting, remote CI runners and further reconstruction quality tuning.
 
 ### Definition of done for each increment
 
@@ -870,29 +1024,30 @@ Phase 10 (MVP release and documentation): production configuration, deployment v
 
 ### 10.0. Resume in one minute
 
-The state below was verified at the end of Phase 8. **Continuation point:** Phases 2–8 are complete. Phase 9 (comprehensive testing and quality assurance) is next; the viewer/result page, worker lifecycle, pipeline registry, outbox dispatcher, recovery service, result persistence/download path, scene pipeline, generation UI, superseded-result cleanup and scene-workspace retention are the starting point. The working tree is uncommitted (Section 6) — do not reset, stage or commit it.
+The state below was verified at the end of Phase 10. **Continuation point:** Phases 2–10 are complete; the MVP is released as 1.0.0 and deployment-verified. No Phase 11 work has started. The development stack was returned to the running, healthy eleven-service state after the production verification. The working tree is uncommitted (Section 6) — do not reset, stage or commit it.
 
-1. **Do not re-derive the project.** Read this handoff in full, then [`NEXT_SESSION.md`](NEXT_SESSION.md), [`AI_DEVELOPMENT_GUIDE.md`](AI_DEVELOPMENT_GUIDE.md), then Phase 9 of [`10_development_roadmap.md`](specifications/10_development_roadmap.md) and the Phase 9 reading list below.
-2. **Check the sandbox policy** (Section 6): Docker needs `danger-full-access`; under `workspace-write` it fails with "Access is denied". If approvals are enabled, retry the exact command with the narrowest wider mode; if they are disabled and Docker is blocked, report the baseline as **blocked**.
-3. **Confirm the baseline** (Section 5): `docker compose -f compose.yaml -f compose.gpu.yaml ps -a`, the three worker pings, the `cleanup_scene_workspaces_task` registration in the cleanup worker, the dispatcher/recovery heartbeat files, the object worker's `triposr_model_loaded`/`object_generation_pipeline_ready` logs and the scene worker's `scene_pipeline_ready` log, the backend suite (509 passed), the frontend suite (130 passed), the scene ML suite (75 passed, 1 skipped), the object ML suite (35 passed, 1 skipped), lint, format, `alembic check`, `pip check`, the API health endpoints and the frontend checks. Fix a failing baseline before any new work.
-4. **Do the next increment** (Section 9, "Next: Phase 9"): execute the complete testing matrix, add the CI quality gate and produce the release-readiness assessment. Do not re-open Phases 2–8.
+1. **Do not re-derive the project.** Read this handoff in full, then [`NEXT_SESSION.md`](NEXT_SESSION.md), [`AI_DEVELOPMENT_GUIDE.md`](AI_DEVELOPMENT_GUIDE.md), and the relevant specification / Section 11 of [`10_development_roadmap.md`](specifications/10_development_roadmap.md) before starting post-MVP work.
+2. **Check the sandbox policy** (Section 6): Docker needs `danger-full-access`; under `workspace-write` it fails with "Access is denied". If Docker Desktop is not running, start it first (the missing pipe is a stopped engine, not necessarily a denial). If approvals are enabled, retry the exact command with the narrowest wider mode; if they are disabled and Docker is genuinely blocked, report the baseline as **blocked**.
+3. **Confirm the baseline** (Section 5): `docker compose -f compose.yaml -f compose.gpu.yaml ps -a`, the three worker pings, the `cleanup_scene_workspaces_task` and `cleanup_sessions_task` registrations, the dispatcher/recovery heartbeat files, the object worker's `triposr_model_loaded`/`object_generation_pipeline_ready` logs and the scene worker's `scene_pipeline_ready` log, the backend suite (525 passed), the frontend suite (148 passed), the scene ML suite (75 passed, 1 skipped), the object ML suite (35 passed, 1 skipped), lint, format, `alembic check`, `pip check`, the API health endpoints and the frontend checks. Fix a failing baseline before any new work.
+4. **Do not re-open Phases 2–10.** The MVP is released; post-MVP work must start from Section 11 of the roadmap, with its own plan and acceptance criteria. Do not change the viewer, result/download contract, outbox, reconstruction pipelines or production packaging unless a new finding genuinely requires it.
 5. **Update the handoff and report** in the guide's format (Section 18.4) with the identifiers actually verified.
 
-**Phase 9 reading:** Phase 9 in `10_development_roadmap.md` (tasks 9.1–9.7); `09_testing.md` (all of it, especially Sections 6–21); `04_backend_specification.md`; `08_infrastructure.md`; `api_contracts.md`; [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md) for the current performance baseline, drills and known limitations.
+**Phase 10 reading:** [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md), [`releases/v1.0.0.md`](releases/v1.0.0.md), [`deployment.md`](deployment.md), [`developer_guide.md`](developer_guide.md), [`user_guide.md`](user_guide.md), [`api.md`](api.md) and `docs/operations/backup_restore.md`.
 
 If the stack is already running (it was left healthy), step 3 can start with `docker compose -f compose.yaml -f compose.gpu.yaml ps -a`; the URLs are `http://127.0.0.1:8000` (API), `http://127.0.0.1:5173` (frontend) and `http://127.0.0.1:8000/docs` (Swagger). If Docker is unavailable, report the baseline as **blocked** rather than guessing.
 
-**State left behind by Phase 8:** the API, object-worker and scene-worker images were rebuilt with the Phase 8 code and verified by inspection; the services were recreated from them and left healthy. `.proof/phase8/evidence/` holds the outage/backup/performance evidence (gitignored). `backend/tests/db/conftest.py` now routes test uploads to `/tmp/mogen-test-storage`; keep that isolation. The cleanup worker's hourly retention sweep is active, and the retained `/data/work/scene/379073b3-…` workspace becomes eligible ~2026-11-14 unless `SCENE_WORKSPACE_RETENTION_HOURS` is raised or set to `0`.
+**State left behind by Phase 10:** the development stack is running with rebuilt `mogen-api:dev` (1.0.0 code, `packaging` pin) and `mogen-frontend:dev`; `mogen-object-worker:dev` and `mogen-scene-worker:dev` are unchanged (the object runtime already had packaging 26.3). Nine services are healthy and `migration`/`model-init` are `Exited (0)`. Production images `:1.0.0` are built but not running. `.env.production`, `infrastructure/certs/tls.{crt,key}`, `.backups/` and `.env` exist locally and are gitignored; the `app` database role password was changed to the production secret, so `.env` is required for the development stack. `e2e/` and `.github/workflows/` are source files in the working tree (unstaged). `backend/tests/db/conftest.py` still routes test uploads to `/tmp/mogen-test-storage`; keep that isolation. The retained `/data/work/scene/379073b3-…` workspace becomes eligible for the retention sweep after ~2026-11-14 unless `SCENE_WORKSPACE_RETENTION_HOURS` is raised or set to `0`.
 
 ### 10.1. State snapshot
 
 | Item | Value |
 |---|---|
-| Phase / increment | Phases 2–8 complete; **next Phase 9 comprehensive testing and quality assurance** |
+| Phase / increment | Phases 2–10 complete; **MVP 1.0.0 released and deployment-verified; next work is post-MVP Section 11** |
 | Stack | eleven Compose services; `db`, `redis`, `api`, `cleanup-worker`, `object-worker`, `scene-worker`, `outbox-dispatcher`, `task-recovery`, `frontend` healthy; `migration` and `model-init` Exited (0) |
-| Backend suite | **509 passed, 1 warning**: 332 database/API, 169 unit, 8 API-shell |
-| Frontend suite | **130 passed** across 22 files, including 35 viewer cases with a real GLB fixture; lint, typecheck, format check and production build clean |
+| Backend suite | **525 passed, 1 warning**: 339 database/API, 178 unit, 8 API-shell; 87.80% line coverage |
+| Frontend suite | **148 passed** across 24 files; 71.47% line coverage; lint, typecheck, format check and production build clean |
 | ML suites | Scene **75 passed, 1 skipped** (the skip is the opt-in real reconstruction); object **35 passed, 1 skipped** plus the opt-in real-model test passing separately |
+| E2E | repository `e2e/` Playwright suite, **17/17 passed against the production HTTPS stack**; real object and real 11-image scene workflows |
 | Phase 2 close-out | Complete; report in [`reviews/phase2_closeout.md`](reviews/phase2_closeout.md) |
 | Phase 3 integration | Complete; auth, dashboard, creation, uploads and details verified; live smoke through the frontend proxy |
 | Phase 4 background processing | Complete; report in [`reviews/phase4_closeout.md`](reviews/phase4_closeout.md); outbox, dispatcher, workers, generation API, recovery and cleanup dispatch verified |
@@ -900,26 +1055,29 @@ If the stack is already running (it was left healthy), step 3 can start with `do
 | Phase 6 scene reconstruction | Complete; report in [`reviews/phase6_closeout.md`](reviews/phase6_closeout.md); real COLMAP/OpenMVS worker, 11-image standalone proof, live 5-image worker run, failure preservation and scene UI verified |
 | Phase 7 viewer and result management | Complete; report in [`reviews/phase7_closeout.md`](reviews/phase7_closeout.md); unified R3F viewer, authorized GLB loading, controls, information panel, download/result management and real Edge proof against object and scene assets |
 | Phase 8 reliability, security and optimization | Complete; report in [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md); security/authorization verification, superseded-result cleanup, scene-workspace retention, stale-read fix, Redis/PostgreSQL outage drills, backup/restore drill and performance baseline |
-| Quality gates | `ruff check` clean, `ruff format --check` clean (112 backend files), `alembic check` no drift, `pip check` clean; frontend lint/typecheck/format/build clean (bundle ~1.54 MB / 436 kB gzip, Vite chunk warning); backend coverage 89% (Phase 5 measurement; not re-measured in Phase 8) |
+| Phase 9 testing and quality assurance | Complete; report in [`reviews/phase9_closeout.md`](reviews/phase9_closeout.md); full matrix, real ML runs, CI workflows, rate limiting, session cleanup, coverage and release-readiness assessment |
+| Phase 10 MVP release and documentation | Complete; report in [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md); production images/overlay, nginx HTTPS, Secure cookies, separate beat, scheduled backups, 17/17 production E2E, real object and scene runs, docs and release 1.0.0; `M9` achieved |
+| Production stack | `compose.prod.yaml`: `mogen-api:1.0.0`, `mogen-object-worker:1.0.0`, `mogen-scene-worker:1.0.0`, `mogen-frontend:1.0.0`, `mogen-backup:1.0.0`; only nginx 80/443 published; `beat` and `backup` services; built but not currently running |
+| Quality gates | `ruff check` clean, `ruff format --check` clean (117 backend files), `alembic check` no drift, `pip check` clean; frontend lint/typecheck/format/build clean (bundle ~1.54 MB / 436 kB gzip, Vite chunk warning) |
 | Live API | `/health/*`, `/api/v1/auth/*`, `/api/v1/projects`, `/api/v1/projects/{id}/images` (POST/GET), `.../images/{image_id}/content` (GET), `.../images/{image_id}` (DELETE), `POST /api/v1/projects/{id}/generate`, `GET /api/v1/projects/{id}/status`, `GET /api/v1/projects/{id}/result`, `GET /api/v1/projects/{id}/download` |
 | Generation workers | `object-worker` loads the real TripoSR model once and processes `object_generation`; `scene-worker` verifies COLMAP 4.2.1/OpenMVS 2.4.0 and processes `scene_reconstruction` with the real pipeline |
 | Outbox dispatcher | Standalone process; claims committed events, publishes to the three queues, retries with backoff, releases expired locks; heartbeat file `/tmp/outbox-dispatcher.heartbeat` |
 | Task recovery | Standalone process; requeues/fails stale tasks and detects dispatch stalls; heartbeat file `/tmp/task-recovery.heartbeat` |
-| Cleanup worker | Celery 5.7.0 on queue `file_cleanup`, beat poll every 15 s as recovery, targeted `cleanup_storage_task(job_id)` from the dispatcher, hourly `cleanup_scene_workspaces_task` retention sweep, `celery inspect ping` healthy |
-| Configuration | `MAX_PAGE_SIZE=100`, `MAX_UPLOAD_SIZE_MB=20`, `MAX_IMAGE_DIMENSION=8192`, `MIN_SCENE_IMAGES=3`, `MAX_SCENE_IMAGES=100`, `CLEANUP_*`, `SCENE_WORKSPACE_RETENTION_HOURS=168`, `SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS=3600`, `OUTBOX_*`, `TASK_LEASE_SECONDS=300`, `TASK_HEARTBEAT_SECONDS=30`, `TASK_STALE_THRESHOLD_SECONDS=900`, `DISPATCH_STALL_TIMEOUT_SECONDS=900`, `TASK_RECOVERY_*`, `OBJECT_*`, `SCENE_RECONSTRUCTION_ENABLED=true`, `SCENE_COLMAP_EXECUTABLE=/usr/local/bin/colmap`, `SCENE_OPENMVS_BIN_DIR=/usr/local/bin/OpenMVS`, `SCENE_WORK_DIR=/data/work/scene`, `SCENE_MATCHING_STRATEGY=EXHAUSTIVE`, `SCENE_COLMAP_USE_GPU=false` (base; GPU override true), `SCENE_COLMAP_MAX_FEATURES=8192`, `SCENE_COLMAP_CAMERA_MODEL=SIMPLE_RADIAL`, `SCENE_MAX_IMAGE_SIZE=2000`, `SCENE_MAX_THREADS=4`, `SCENE_OPENMVS_USE_CUDA=false`, `SCENE_ENABLE_MESH_REFINEMENT=true`, `SCENE_ENABLE_TEXTURE_GENERATION=true`, `SCENE_MIN_REGISTERED_IMAGES=3`, `SCENE_MIN_REGISTRATION_RATIO=0.5`, `SCENE_MIN_SPARSE_POINTS=100`, `SCENE_MIN_DENSE_POINTS=100`, `SCENE_MAX_TASK_SECONDS=14400`, `SCENE_COLMAP_TIMEOUT_SECONDS=3600`, `SCENE_OPENMVS_TIMEOUT_SECONDS=5400`, `SCENE_EXPORT_TIMEOUT_SECONDS=1800`; frontend mirrors upload limits through `VITE_MAX_UPLOAD_SIZE_MB`, `VITE_MIN_SCENE_IMAGES`, `VITE_MAX_SCENE_IMAGES`, `VITE_TASK_POLL_INTERVAL` |
+| Cleanup worker | Celery 5.7.0 on queue `file_cleanup`, beat poll every 15 s as recovery, targeted `cleanup_storage_task(job_id)` from the dispatcher, hourly `cleanup_scene_workspaces_task` retention sweep and hourly `cleanup_sessions_task`, `celery inspect ping` healthy |
+| Configuration | `AUTH_RATE_LIMIT_ENABLED=true`, `AUTH_RATE_LIMIT_ATTEMPTS=10`, `AUTH_RATE_LIMIT_WINDOW_SECONDS=60`, `SESSION_CLEANUP_INTERVAL_SECONDS=3600`, `MAX_PAGE_SIZE=100`, `MAX_UPLOAD_SIZE_MB=20`, `MAX_IMAGE_DIMENSION=8192`, `MIN_SCENE_IMAGES=3`, `MAX_SCENE_IMAGES=100`, `CLEANUP_*`, `SCENE_WORKSPACE_RETENTION_HOURS=168`, `SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS=3600`, `OUTBOX_*`, `TASK_LEASE_SECONDS=300`, `TASK_HEARTBEAT_SECONDS=30`, `TASK_STALE_THRESHOLD_SECONDS=900`, `DISPATCH_STALL_TIMEOUT_SECONDS=900`, `TASK_RECOVERY_*`, `OBJECT_*`, `SCENE_RECONSTRUCTION_ENABLED=true`, `SCENE_COLMAP_EXECUTABLE=/usr/local/bin/colmap`, `SCENE_OPENMVS_BIN_DIR=/usr/local/bin/OpenMVS`, `SCENE_WORK_DIR=/data/work/scene`, `SCENE_MATCHING_STRATEGY=EXHAUSTIVE`, `SCENE_COLMAP_USE_GPU=false` (base; GPU override true), `SCENE_COLMAP_MAX_FEATURES=8192`, `SCENE_COLMAP_CAMERA_MODEL=SIMPLE_RADIAL`, `SCENE_MAX_IMAGE_SIZE=2000`, `SCENE_MAX_THREADS=4`, `SCENE_OPENMVS_USE_CUDA=false`, `SCENE_ENABLE_MESH_REFINEMENT=true`, `SCENE_ENABLE_TEXTURE_GENERATION=true`, `SCENE_MIN_REGISTERED_IMAGES=3`, `SCENE_MIN_REGISTRATION_RATIO=0.5`, `SCENE_MIN_SPARSE_POINTS=100`, `SCENE_MIN_DENSE_POINTS=100`, `SCENE_MAX_TASK_SECONDS=14400`, `SCENE_COLMAP_TIMEOUT_SECONDS=3600`, `SCENE_OPENMVS_TIMEOUT_SECONDS=5400`, `SCENE_EXPORT_TIMEOUT_SECONDS=1800`; frontend mirrors upload limits through `VITE_MAX_UPLOAD_SIZE_MB`, `VITE_MIN_SCENE_IMAGES`, `VITE_MAX_SCENE_IMAGES`, `VITE_TASK_POLL_INTERVAL` |
 | Storage | `/data` on the `app_data` volume, shared by the API, cleanup worker and object/scene workers; source keys like `projects/{project_id}/source/{image_id}.jpg`, object results at `projects/{project_id}/results/{task_id}/model.glb`, scene results at `.../scene.glb`; scene workspaces at `/data/work/scene/{task_id}` (pruned after the retention window); `triposr_model_cache:/models` holds the pinned weights/DINO/rembg cache |
-| Database content | Phase 7 and Phase 8 smoke/fixture data removed. Pre-existing development data plus the user-created projects remain, and the historical SCENE task `379073b3…` (soft-deleted project) is retained with its diagnostics workspace; do not delete these. |
-| Cleanup jobs | Dispatched as `cleanup.requested`; executed by the worker (`PENDING` → `PROCESSING` → `COMPLETED`/`FAILED`), with `attempts` and `last_error`; superseded result files and expired scene workspaces are now producers |
-| Git | branch `main`, zero commits; the Phase 2 files are staged and the Phase 2–8 files listed in Section 6 are untracked |
-| Frontend | Russian UI, auth, dashboard, creation, uploads, details, generation/scene panel and unified 3D result viewer; 130 tests; lint/typecheck/format/build clean |
+| Database content | Phase 7–10 smoke/fixture rows are removed where they belonged to deleted projects; pre-existing development data, the user-created projects and the historical SCENE task `379073b3…` (soft-deleted project, retained workspace) remain; do not delete these. Phase 10 cleaned its E2E/deployment-check users and returned the counts to 2 users / 19 projects / 17 tasks / 10 results / 141 images. |
+| Cleanup jobs | Dispatched as `cleanup.requested`; executed by the worker (`PENDING` → `PROCESSING` → `COMPLETED`/`FAILED`), with `attempts` and `last_error`; superseded result files, expired scene workspaces and expired/revoked sessions are producers |
+| Git | branch `main`, three commits; Phase 9 and Phase 10 changes are unstaged/untracked |
+| Frontend | Russian UI, auth, dashboard, creation, uploads, details, generation/scene panel and unified 3D result viewer; 148 tests; lint/typecheck/format/build clean |
 
 ### 10.2. Copy-paste prompt
 
-> Working directory: `H:\Study\Univer\projects\mogen`. Read `docs/HANDOFF.md` first, then `docs/AI_DEVELOPMENT_GUIDE.md`, `docs/NEXT_SESSION.md` and Phase 9 of `docs/specifications/10_development_roadmap.md`. Phases 2–8 are complete; do not redo them. Confirm the baseline from Section 5 of the handoff (expect 509 backend tests, 130 frontend tests, 75 scene ML unit tests plus the skipped opt-in real-reconstruction test, 35 object ML unit tests plus the opt-in real-model test, nine healthy services plus `migration` and `model-init` `Exited (0)`, three healthy worker pings, fresh dispatcher/recovery heartbeat files, an object worker that loaded the real TripoSR model, a scene worker that detected COLMAP 4.2.1 and OpenMVS 2.4.0; the Phase 7 real-browser viewer proof and the Phase 8 performance baseline are recorded in `docs/reviews/phase7_closeout.md` and `docs/reviews/phase8_closeout.md`, so do not run a new generation just to re-check delivery; the stack may already be running, so verify rather than assume). Then implement Phase 9 (tasks 9.1–9.7) and close the remaining product acceptance criteria: run the complete frontend/backend/ML/security/performance/E2E matrix, add the committed CI quality gate (`TEST-AC-19`), decide the rate-limiting and session-cleanup open items, and produce the full test report, coverage report, ML/quality report, performance measurements and release-readiness assessment, citing the applicable acceptance criteria. Do not re-open Phases 2–8 and do not change the viewer, result/download contract, outbox or reconstruction pipelines unless a Phase 9 finding genuinely requires it. Do not implement Phase 10+. Follow the Definition of Done and report format from the guide; update `docs/HANDOFF.md` and add a Phase 9 close-out review.
+> Working directory: `H:\Study\Univer\projects\mogen`. Read `docs/HANDOFF.md` first, then `docs/AI_DEVELOPMENT_GUIDE.md`, `docs/NEXT_SESSION.md`, `docs/reviews/phase10_closeout.md` and `docs/releases/v1.0.0.md`. Phases 2–10 are complete and the MVP is released as 1.0.0; do not redo them and do not re-open the viewer, result/download contract, outbox, reconstruction pipelines or production packaging unless a new finding genuinely requires it. Verify the Phase 10 baseline from Section 5 of the handoff (525 backend tests, 148 frontend tests, 75 scene ML + 1 skipped, 35 object ML + 1 skipped, nine healthy development services plus `migration` and `model-init` `Exited (0)`, three worker pings, the retention and session-cleanup tasks registered, fresh dispatcher/recovery heartbeat files, the real TripoSR model loaded, COLMAP 4.2.1 and OpenMVS 2.4.0 detected, and the production `:1.0.0` images present). Then choose a post-MVP item from Section 11 of `docs/specifications/10_development_roadmap.md`, write its plan and acceptance criteria, implement only that item, and follow the Definition of Done and report format from the guide. Do not implement multiple Section 11 items at once and do not change the released MVP behaviour without recording the finding. Update `docs/HANDOFF.md`, `docs/NEXT_SESSION.md` and add a close-out review for the work.
 
 ### 10.3. Session-start checklist
 
-1. **Check the sandbox policy first** (Section 6). Docker needs named-pipe access: with `danger-full-access` run it directly; with `workspace-write` the CLI fails with "Access is denied" on `dockerDesktopLinuxEngine`. Never request escalation when the session says approvals are disabled.
+1. **Check the sandbox policy first** (Section 6). Docker needs named-pipe access: with `danger-full-access` run it directly; with `workspace-write` the CLI fails with "Access is denied" on `dockerDesktopLinuxEngine`. If Docker Desktop is not running at all, the pipe is absent: start Docker Desktop before concluding the engine is blocked, and never request escalation when the session says approvals are disabled.
 2. **Confirm the Section 5 baseline end to end** before writing code:
 
    ```powershell
@@ -927,11 +1085,11 @@ If the stack is already running (it was left healthy), step 3 can start with `do
    docker compose exec cleanup-worker celery -A app.tasks.celery_app:celery_app inspect ping
    docker compose exec object-worker celery -A app.tasks.celery_app:celery_app inspect ping
    docker compose exec scene-worker celery -A app.tasks.celery_app:celery_app inspect ping
-   docker compose exec cleanup-worker sh -c 'celery -A app.tasks.celery_app:celery_app inspect registered -d celery@$HOSTNAME --timeout 5'  # includes cleanup_scene_workspaces_task
+   docker compose exec cleanup-worker sh -c 'celery -A app.tasks.celery_app:celery_app inspect registered -d celery@$HOSTNAME --timeout 5'  # includes cleanup_scene_workspaces_task and cleanup_sessions_task
    docker compose exec outbox-dispatcher cat /tmp/outbox-dispatcher.heartbeat
    docker compose exec task-recovery cat /tmp/task-recovery.heartbeat
    docker compose run --rm --no-deps api pytest > "$env:TEMP\pytest.log" 2>&1
-   Get-Content "$env:TEMP\pytest.log" -Tail 2        # 509 passed, 1 warning
+   Get-Content "$env:TEMP\pytest.log" -Tail 2        # 525 passed, 1 warning
    docker compose run --rm --no-deps api ruff check .
    docker compose run --rm --no-deps api ruff format --check .
    docker compose run --rm --no-deps api alembic check
@@ -942,22 +1100,13 @@ If the stack is already running (it was left healthy), step 3 can start with `do
    docker run --rm mogen-frontend:dev npm run lint
    docker run --rm mogen-frontend:dev npm run typecheck
    docker run --rm mogen-frontend:dev npm run format:check
-   docker run --rm mogen-frontend:dev npm run test:run   # 130 passed
+   docker run --rm mogen-frontend:dev npm run test:run   # 148 passed
    docker run --rm mogen-frontend:dev npm run build
    ```
 
    Also check `http://127.0.0.1:8000/health/ready`, `http://127.0.0.1:5173/` and the proxy (`http://127.0.0.1:5173/api/v1/probe` must return a JSON `NOT_FOUND` 404), the object worker logs (`triposr_model_loaded`, `object_generation_pipeline_ready`) and the scene worker log (`scene_pipeline_ready`). Immediately after `up` a service can still report `health: starting`; the object worker may take 4–5 minutes to load the model (600 s start period). Fix any failure before building on it.
-3. **Read the Section 9 "Next: Phase 9" plan** and the Phase 9 reading list in Section 10.0. The documentation is the source of truth, not the current code.
-4. **Implement Phase 9 in this order**, citing criteria and adding tests at each step:
-   1. 9.1 — frontend tests: unit, component, API interaction, viewer, type check, lint.
-   2. 9.2 — backend tests: unit, API, database, authorization, storage, Celery, outbox.
-   3. 9.3 — ML integration: real TripoSR, real COLMAP/OpenMVS, GLB validation, performance.
-   4. 9.4 — end-to-end user workflows, including failure, retry, previous-result preservation, deletion during processing and worker-interruption recovery.
-   5. 9.5 — security testing: authentication, authorization, CSRF, upload validation, user isolation and private assets.
-   6. 9.6 — performance testing for both object and scene sizes and GLB loading.
-   7. 9.7 — final bug fixes, then the `TEST-AC-19` CI gate and the release-readiness assessment.
-
-   Reuse the Phase 7/8 `.proof/` scripts and the Phase 8 drills; do not re-open Phases 2–8 or change the generation pipelines, the viewer/result/download contract or the outbox unless a Phase 9 finding genuinely requires it. Do not implement Phase 10+.
+3. **Read the Phase 10 close-out and the release record** (`reviews/phase10_closeout.md`, `releases/v1.0.0.md`, `deployment.md`, `developer_guide.md`). The documentation is the source of truth, not the current code.
+4. **Choose one post-MVP item from Section 11** of `10_development_roadmap.md`, write its plan and acceptance criteria, then implement only that item. Do not re-open Phases 2–10 or change the released MVP behaviour without a recorded finding.
 5. **Re-run the baseline after any change** and confirm the documented counts match.
 6. **Update this handoff**: Section 1 state, Section 5 counts and breakdown, Section 7 decisions, Section 8 open items, Section 9 status and next increment, and Section 10 if resume steps change.
 7. **Report with the guide's completion format** (Section 18.4) and cite only identifiers that were actually verified.
@@ -965,25 +1114,26 @@ If the stack is already running (it was left healthy), step 3 can start with `do
 ### 10.4. Working agreement
 
 - Do not stage, commit or rewrite git history unless the user asks. `git diff` against the index shows working-tree changes only.
-- Do not recreate the cleanup worker, Celery application, outbox table/repository, generation-task/result models, the Phase 4/5/6 worker lifecycle, the generation/result API or the Phase 7 viewer. They are delivered and tested. Phase 8 hardened them (refreshed terminal reads, superseded-result cleanup, workspace retention, probe scratch directory); Phase 9 tests them; neither replaces them.
+- Do not recreate the cleanup worker, Celery application, outbox table/repository, generation-task/result models, the Phase 4/5/6 worker lifecycle, the generation/result API or the Phase 7 viewer. They are delivered and tested. Phase 9 tested them comprehensively and added rate limiting, session cleanup, CI and the repository E2E suite; Phase 10 packaged the same application for release and verified the production deployment.
 - Do not treat Redis as the source of truth: task and outbox state live in PostgreSQL; Redis is only the broker.
-- Do not change the TripoSR or COLMAP/OpenMVS pipelines, the viewer, the result/download contract or the outbox unless a Phase 9 finding genuinely requires it; document any such finding before changing behaviour.
-- The object generation panel, scene reconstruction panel, authenticated download, unified viewer, superseded-result cleanup and workspace-retention sweep are implemented. Phase 9 adds the comprehensive test matrix and the CI gate.
-- `ml/workers/`, `infrastructure/` and `tests/` at the repository root remain placeholders; fill only what Phase 9 actually needs.
+- Do not change the TripoSR or COLMAP/OpenMVS pipelines, the viewer, the result/download contract, the outbox or the production packaging unless a new finding genuinely requires it; document any such finding before changing behaviour.
+- The object generation panel, scene reconstruction panel, authenticated download, unified viewer, superseded-result cleanup, workspace-retention sweep, auth limiter and session-cleanup task are implemented. The MVP production configuration is in `compose.prod.yaml`; post-MVP work starts from Section 11.
+- `ml/workers/` and `tests/` at the repository root remain placeholders; `infrastructure/` now contains the backup image and certificate scripts. Fill only what a post-MVP task actually needs.
 - Do not loosen pinned dependencies; the viewer pins Three.js `0.187.0`, React Three Fiber `9.8.2` and Drei `10.7.9`. Record and justify any dependency change.
 - Do not modify `docs/specifications/` or `docs/architecture/` to match the implementation; if the two disagree, follow the specification and record the resolution.
 - Report checks as passed, failed, skipped, not executed or blocked. Never present an unexecuted check as passed.
 
-### 10.5. Work remaining in Phases 2–8
+### 10.5. Work remaining in Phases 2–10
 
-None. Phase 2 is closed out in [`reviews/phase2_closeout.md`](reviews/phase2_closeout.md), Phase 3 was completed and verified with 84 frontend tests, Phase 4 is closed out in [`reviews/phase4_closeout.md`](reviews/phase4_closeout.md) with 451 backend tests, Phase 5 is closed out in [`reviews/phase5_closeout.md`](reviews/phase5_closeout.md) with 481 backend, 92 frontend and 35 object ML tests plus the real-model proof, Phase 6 is closed out in [`reviews/phase6_closeout.md`](reviews/phase6_closeout.md) with 491 backend, 94 frontend and 74 scene ML tests plus the real reconstruction and live worker proofs, Phase 7 is closed out in [`reviews/phase7_closeout.md`](reviews/phase7_closeout.md) with 491 backend, 130 frontend and the ML suites plus the real Edge viewer proof for both asset types, and Phase 8 is closed out in [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md) with 509 backend, 130 frontend, 75 scene and 35 object ML tests plus the reliability/security drills and the performance baseline.
+None. Phase 2 is closed out in [`reviews/phase2_closeout.md`](reviews/phase2_closeout.md), Phase 3 was completed and verified with 84 frontend tests, Phase 4 is closed out in [`reviews/phase4_closeout.md`](reviews/phase4_closeout.md) with 451 backend tests, Phase 5 is closed out in [`reviews/phase5_closeout.md`](reviews/phase5_closeout.md) with 481 backend, 92 frontend and 35 object ML tests plus the real-model proof, Phase 6 is closed out in [`reviews/phase6_closeout.md`](reviews/phase6_closeout.md) with 491 backend, 94 frontend and 74 scene ML tests plus the real reconstruction and live worker proofs, Phase 7 is closed out in [`reviews/phase7_closeout.md`](reviews/phase7_closeout.md) with 130 frontend and the ML suites plus the real Edge viewer proof for both asset types, Phase 8 is closed out in [`reviews/phase8_closeout.md`](reviews/phase8_closeout.md) with 509 backend, 130 frontend, 75 scene and 35 object ML tests plus the reliability/security drills, Phase 9 is closed out in [`reviews/phase9_closeout.md`](reviews/phase9_closeout.md) with 525 backend, 148 frontend, 75 scene + 1 skipped, 35 object + 1 skipped and 17/17 E2E tests plus real ML, coverage, performance, security and release-readiness evidence, and Phase 10 is closed out in [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md) with the production images, HTTPS deployment verification (17/17 E2E), real object and scene runs, scheduled-backup restore drill, documentation and release 1.0.0.
 
 ### 10.6. Next phase
 
-Phase 9 (comprehensive testing and quality assurance): the complete frontend/backend/ML/E2E/security/performance matrix, the `TEST-AC-19` CI quality gate, the remaining product acceptance criteria and the release-readiness assessment, per tasks 9.1–9.7 of `10_development_roadmap.md`.
-
-Deliverables: full test report, code coverage report, ML processing and reconstruction quality reports, performance measurements for small/large objects and small/complex scenes, known-limitations list and release-readiness assessment. Acceptance criteria: all mandatory automated tests pass; both real ML pipelines executed successfully; both workflows pass end-to-end validation; generated GLBs pass validation; all mandatory product acceptance criteria are satisfied; no unresolved critical defects remain.
-
-Open items Phase 9 must close or explicitly decide: `TEST-AC-19` (CI), auth rate limiting (`429`), scheduled session cleanup, scheduled backups and a committed Playwright E2E suite. `M8` (Quality Ready) is only partially achieved until the Phase 9 matrix passes.
-
-Do not re-open Phases 2–8 by re-implementing delivered functionality; the next increment is Phase 9.
+The MVP is released. The next work is a post-MVP item from Section 11 (Future
+Development) of `10_development_roadmap.md`; no Phase 11 implementation has
+started. Candidate items: horizontal scaling and object storage, richer
+worker/task monitoring and dead-letter handling, route-level bundle splitting,
+shared rate limiting for multiple API replicas, remote CI runners, and further
+reconstruction quality/performance tuning. Choose one item, define its acceptance
+criteria, and do not re-open the released MVP behaviour without a recorded
+finding.

@@ -77,6 +77,9 @@ API_TEST_SETTINGS: dict[str, Any] = {
     "password_min_length": 8,
     "password_max_length": 128,
     "max_page_size": 100,
+    # Ordinary API tests register many users from one test client; the limiter
+    # is exercised explicitly by tests/db/test_auth_rate_limit.py.
+    "auth_rate_limit_enabled": False,
 }
 
 

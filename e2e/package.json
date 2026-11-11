@@ -1,0 +1,17 @@
+{
+  "name": "mogen-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:smoke": "playwright test tests/auth.spec.ts tests/projects.spec.ts tests/security.spec.ts",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0"
+  }
+}

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response
 
 from app.api.dependencies import (
+    enforce_auth_rate_limit,
     get_auth_service,
     get_current_auth,
     get_settings,
@@ -66,7 +67,7 @@ def _clear_auth_cookies(response: Response) -> None:
     "/register",
     status_code=201,
     response_model=AuthResponse,
-    dependencies=[Depends(require_allowed_origin)],
+    dependencies=[Depends(require_allowed_origin), Depends(enforce_auth_rate_limit)],
     summary="Register a user",
 )
 def register(
@@ -90,7 +91,7 @@ def register(
     "/login",
     status_code=200,
     response_model=AuthResponse,
-    dependencies=[Depends(require_allowed_origin)],
+    dependencies=[Depends(require_allowed_origin), Depends(enforce_auth_rate_limit)],
     summary="Log in",
 )
 def login(

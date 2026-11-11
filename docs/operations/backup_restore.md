@@ -3,7 +3,8 @@
 **Scope:** development and MVP deployment of the 3D generation application.
 **Requirements:** `08_infrastructure.md` Sections 12.1–12.5, `INF-AC-19` and the
 Phase 8 deliverables (backup documentation, storage cleanup verification).
-**Last verified:** 2026-11-09 (Phase 8; see `docs/reviews/phase8_closeout.md`).
+**Last verified:** 2026-11-11 (Phase 10; scheduled `backup` service and a live
+backup/restore check; see `docs/reviews/phase10_closeout.md`).
 
 The authoritative state is PostgreSQL plus the application file storage in the
 `app_data` volume. Redis is a broker only: its AOF improves recovery but never
@@ -116,6 +117,26 @@ storage keys, so restoring only one half produces missing-file errors.
    stale `PROCESSING` tasks are requeued or failed by the task-recovery service.
    No manual intervention is required for either.
 
+### Restoring a scheduled backup
+
+The `backup` service writes one directory per run. Use its `database.dump` and
+`app-data.tgz` in place of the manual artefacts above:
+
+```powershell
+$backup = ".backups/20261111T170345Z"     # the chosen timestamp directory
+docker cp "$backup/database.dump" mogen-db-1:/tmp/restore.dump
+docker compose exec -T db psql -U app -d postgres -c "DROP DATABASE IF EXISTS app WITH (FORCE); CREATE DATABASE app OWNER app;"
+docker compose exec -T db pg_restore -U app -d app --no-owner --role=app /tmp/restore.dump
+docker run --rm -v mogen_app_data:/data -v "${PWD}/$backup:/backup:ro" mogen-api:dev `
+  sh -c "rm -rf /data/projects && tar -xzf /backup/app-data.tgz -C /data"
+```
+
+`SHA256SUMS` and the checksums in `manifest.json` prove the artefacts are
+unmodified; verify them before restoring (`sha256sum -c SHA256SUMS` inside the
+backup directory). The manifest's `migration_revision` must match the release
+being restored; `alembic upgrade head` after the restore applies any later
+revision.
+
 ---
 
 ## 5. Post-restore consistency verification
@@ -195,7 +216,40 @@ project deletion schedules a `DIRECTORY` cleanup job for the whole tree.
 
 ## 7. Scheduling
 
-This document defines the procedure; it does not install a scheduler. A
-deployment should run Section 2 and Section 3 on a schedule (for example daily),
-store the artefacts outside the Docker data root, and periodically restore one
-backup into a scratch environment using Section 4 and Section 5.
+Phase 10 ships a scheduled backup service in `compose.prod.yaml`
+(`mogen-backup:1.0.0`, built from `infrastructure/backup/`). It runs one backup
+immediately after the migration completes and then every
+`BACKUP_INTERVAL_SECONDS` (default 86400 = daily). Each run writes:
+
+```text
+$BACKUP_HOST_DIR/<UTC timestamp>/
+  database.dump     pg_dump custom-format archive
+  app-data.tgz      tar.gz of /data/projects
+  SHA256SUMS        checksums of both artefacts
+  manifest.json     created_at, application_version, migration_revision,
+                    PostgreSQL version, sizes and checksums
+```
+
+The service verifies every dump with `pg_restore --list` and every archive with
+`tar -tzf` before publishing the directory, writes `.backup-heartbeat` on
+success, and prunes timestamp-named directories older than
+`BACKUP_RETENTION_DAYS` (default 14). Its Compose health check fails when the
+heartbeat is older than two intervals.
+
+```powershell
+# Production stack; the same --env-file / -f list as the deployment.
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps backup
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs --tail 20 backup
+# On-demand backup outside the schedule:
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml run --rm backup --once
+```
+
+`BACKUP_HOST_DIR` is a host bind mount (default `./.backups`), outside the
+Docker data root, but it is still on the same machine. Copy it to independent
+storage on the same schedule (or configure a second copy step) and periodically
+restore one backup into a scratch environment using Sections 2–5. A Docker
+volume or a same-host directory is not a backup.
+
+The development stack does not run the backup service; use the manual Section 2
+and Section 3 procedures there, or add the production overlay to a machine that
+has the required `.env.production`.

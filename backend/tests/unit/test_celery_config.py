@@ -20,6 +20,7 @@ from app.tasks.celery_app import (
     OBJECT_GENERATION_TASK,
     SCENE_RECONSTRUCTION_QUEUE,
     SCENE_RECONSTRUCTION_TASK,
+    SESSION_CLEANUP_TASK_NAME,
     WORKSPACE_SWEEP_TASK_NAME,
     create_celery_app,
 )
@@ -57,6 +58,7 @@ def test_each_task_is_routed_to_its_own_queue() -> None:
     assert app.conf.task_routes[CLEANUP_TASK_NAME] == {"queue": CLEANUP_QUEUE}
     # The retention sweep is cleanup work, so it never blocks generation.
     assert app.conf.task_routes[WORKSPACE_SWEEP_TASK_NAME] == {"queue": CLEANUP_QUEUE}
+    assert app.conf.task_routes[SESSION_CLEANUP_TASK_NAME] == {"queue": CLEANUP_QUEUE}
 
 
 def test_no_result_backend_is_configured() -> None:
@@ -94,6 +96,10 @@ def test_time_limits_are_per_pipeline() -> None:
         "time_limit": 300,
         "soft_time_limit": 270,
     }
+    assert app.conf.task_annotations[SESSION_CLEANUP_TASK_NAME] == {
+        "time_limit": 300,
+        "soft_time_limit": 270,
+    }
     # The global fallback covers the longest configured task.
     assert app.conf.task_time_limit == 8000
 
@@ -120,6 +126,14 @@ def test_beat_sweeps_scene_workspaces_on_its_own_schedule() -> None:
     assert entry["schedule"] == 1234
 
 
+def test_beat_cleans_up_sessions_on_its_own_schedule() -> None:
+    app = create_celery_app(_settings(session_cleanup_interval_seconds=2345))
+
+    entry = app.conf.beat_schedule["session-cleanup"]
+    assert entry["task"] == SESSION_CLEANUP_TASK_NAME
+    assert entry["schedule"] == 2345
+
+
 def test_the_broker_url_comes_from_settings() -> None:
     app = create_celery_app(_settings(celery_broker_url="redis://other:6379/2"))
 
@@ -135,5 +149,6 @@ def test_every_queue_task_is_registered() -> None:
         SCENE_RECONSTRUCTION_TASK,
         CLEANUP_TASK_NAME,
         WORKSPACE_SWEEP_TASK_NAME,
+        SESSION_CLEANUP_TASK_NAME,
     ):
         assert name in celery_app.tasks

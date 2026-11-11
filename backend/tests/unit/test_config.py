@@ -115,3 +115,30 @@ def test_scene_workspace_retention_defaults_and_bounds() -> None:
         Settings(scene_workspace_retention_hours=-1)
     with pytest.raises(ValidationError):
         Settings(scene_workspace_sweep_interval_seconds=59)
+
+
+def test_session_cleanup_defaults_and_bounds() -> None:
+    """The scheduled session cleanup runs hourly and cannot be sub-minute."""
+    settings = Settings()
+
+    assert settings.session_cleanup_interval_seconds == 3600
+    assert settings.redacted()["session_cleanup_interval_seconds"] == 3600
+
+    with pytest.raises(ValidationError):
+        Settings(session_cleanup_interval_seconds=59)
+
+
+def test_auth_rate_limit_defaults_and_bounds() -> None:
+    """The MVP enables a 10-per-minute limiter and rejects invalid values."""
+    settings = Settings()
+
+    assert settings.auth_rate_limit_enabled is True
+    assert settings.auth_rate_limit_attempts == 10
+    assert settings.auth_rate_limit_window_seconds == 60
+    assert settings.redacted()["auth_rate_limit_attempts"] == 10
+    assert Settings(auth_rate_limit_enabled=False).auth_rate_limit_enabled is False
+
+    with pytest.raises(ValidationError):
+        Settings(auth_rate_limit_attempts=0)
+    with pytest.raises(ValidationError):
+        Settings(auth_rate_limit_window_seconds=0)

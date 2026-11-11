@@ -18,6 +18,7 @@ from app.core import logging as app_logging
 from app.core.config import Settings, get_settings
 from app.core.errors import error_code_for_status, error_response
 from app.core.exceptions import AppError
+from app.core.rate_limit import FixedWindowRateLimiter
 from app.db.session import create_db_engine, create_session_factory
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json" if settings.enable_api_docs else None,
     )
     app.state.settings = settings
+    # One limiter per application instance keeps counters isolated between
+    # tests and API processes (Phase 9 decision; see app/core/rate_limit.py).
+    app.state.auth_rate_limiter = (
+        FixedWindowRateLimiter(
+            limit=settings.auth_rate_limit_attempts,
+            window_seconds=settings.auth_rate_limit_window_seconds,
+        )
+        if settings.auth_rate_limit_enabled
+        else None
+    )
 
     if settings.allowed_origins:
         app.add_middleware(

@@ -18,3 +18,8 @@ httpx==0.28.1
 # Background processing (08_infrastructure.md Section 7). Verified to resolve
 # against the pinned redis==8.1.0 client.
 celery==5.7.0
+# Kombu's Redis transport imports packaging.version directly. The development
+# image received it transitively through pytest, which masked its absence from
+# the first production scene-worker runtime image (Phase 10 finding F1); pin it
+# explicitly so every runtime image declares what it imports.
+packaging==26.3

@@ -1,0 +1,98 @@
+# Real ML validation (TEST-AC-12, TEST-AC-13, TEST-AC-14, TEST-AC-20).
+#
+# These jobs build the dedicated worker images and execute real model inference
+# and a real photogrammetry reconstruction. They need a runner with NVIDIA
+# container support; they are not part of the fast pull-request gate.
+name: ml-validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      scene_images:
+        description: "Absolute path to overlapping scene photographs on the runner"
+        required: true
+        type: string
+  schedule:
+    - cron: "0 4 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  object-generation:
+    name: Real TripoSR inference and GLB validation
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the object worker image
+        run: >-
+          docker build -f ml/object_generation/Dockerfile
+          --target development -t mogen-object-worker:ci .
+
+      - name: Unit tests
+        run: >-
+          docker run --rm -v "${{ github.workspace }}/ml:/work/ml"
+          mogen-object-worker:ci
+          python -m pytest /opt/object_generation/tests -q
+
+      - name: Populate the pinned model cache
+        run: |
+          docker volume create mogen_triposr_model_cache_ci
+          docker run --rm --gpus all \
+            -v mogen_triposr_model_cache_ci:/models \
+            mogen-object-worker:ci python -m object_generation.download_models
+
+      - name: Real model test
+        run: >-
+          docker run --rm --gpus all
+          -v mogen_triposr_model_cache_ci:/models
+          -v "${{ github.workspace }}/ml:/work/ml"
+          -w /work/ml/object_generation
+          -e PYTHONPATH=/work/ml:/opt/triposr:/opt
+          -e RUN_REAL_MODEL_TESTS=1
+          mogen-object-worker:ci
+          python -m pytest -m real_model -q
+
+  scene-reconstruction:
+    name: Real COLMAP/OpenMVS reconstruction and GLB validation
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the scene worker image
+        run: >-
+          docker build -f ml/scene_reconstruction/Dockerfile
+          --target development -t mogen-scene-worker:ci .
+
+      - name: Unit tests
+        run: >-
+          docker run --rm -v "${{ github.workspace }}/ml:/work/ml"
+          mogen-scene-worker:ci
+          python -m pytest /opt/scene_reconstruction/tests -q
+
+      - name: Verify the toolchain
+        run: >-
+          docker run --rm mogen-scene-worker:ci
+          python -m scene_reconstruction.standalone --verify-tools
+
+      - name: Real reconstruction
+        if: ${{ inputs.scene_images != '' }}
+        run: |
+          mkdir -p proof
+          docker run --rm --gpus all \
+            -v "${{ inputs.scene_images }}:/data/scene:ro" \
+            -v "${{ github.workspace }}/proof:/proof" \
+            mogen-scene-worker:ci \
+            python -m scene_reconstruction.standalone \
+              --images /data/scene \
+              --work-dir /proof/work \
+              --output /proof/scene.glb \
+              --max-image-size 1200 --threads 8
+
+      - name: Upload the result
+        uses: actions/upload-artifact@v4
+        with:
+          name: scene-reconstruction-result
+          path: proof/scene.glb
+          if-no-files-found: error

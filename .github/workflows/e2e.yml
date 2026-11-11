@@ -1,0 +1,136 @@
+# Browser end-to-end workflows (TEST-AC-15, TEST-AC-20).
+#
+# The smoke job runs on a hosted runner and starts only the services the
+# non-ML workflows need. The real-ml job requires a self-hosted runner with an
+# NVIDIA GPU, the ML worker images and a local Sceaux-style photo dataset.
+name: e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      scene_images:
+        description: "Absolute path to overlapping scene photographs on the runner"
+        required: false
+        type: string
+  schedule:
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Browser smoke (auth, projects, security, viewer states)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the API and frontend
+        env:
+          # The suite registers many users from one address in seconds; the
+          # limiter has dedicated backend and live coverage (see the Phase 9
+          # close-out), so it is disabled for browser automation only.
+          AUTH_RATE_LIMIT_ENABLED: "false"
+        run: |
+          docker compose up -d --build db redis migration api frontend
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health/ready >/dev/null &&
+               curl -fsS http://127.0.0.1:5173/ >/dev/null; then
+              echo "stack is ready"
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose ps -a
+          docker compose logs api frontend
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install Playwright and Chromium
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run the smoke suite
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: http://localhost:5173
+          E2E_BROWSER_CHANNEL: chromium
+        run: >-
+          npx playwright test
+          tests/auth.spec.ts tests/projects.spec.ts
+          tests/security.spec.ts tests/model-viewer.spec.ts
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          if-no-files-found: ignore
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
+
+  real-ml:
+    name: Browser object + scene workflows (GPU runner)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the full GPU stack
+        env:
+          AUTH_RATE_LIMIT_ENABLED: "false"
+        run: |
+          docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8000/health/ready >/dev/null &&
+               curl -fsS http://127.0.0.1:5173/ >/dev/null; then
+              echo "stack is ready"
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose ps -a
+          docker compose logs object-worker scene-worker
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install Playwright and Chromium
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run both real workflows
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: http://localhost:5173
+          E2E_BROWSER_CHANNEL: chromium
+          E2E_SCENE_IMAGES: ${{ inputs.scene_images }}
+        run: npx playwright test tests/object-generation.spec.ts tests/scene-reconstruction.spec.ts
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-real-ml-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          if-no-files-found: ignore

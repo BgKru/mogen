@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     app_name: str = "3D Generation Service"
     app_env: str = "development"
-    version: str = "0.1.0"
+    version: str = "1.0.0"
     debug: bool = False
 
     api_v1_prefix: str = "/api/v1"
@@ -58,11 +58,13 @@ class Settings(BaseSettings):
     celery_broker_url: str = Field(default="redis://redis:6379/1", repr=False)
     celery_task_ignore_result: bool = True
 
-    # Cleanup worker (08 Section 3.7, 05 Section 12.3).
+    # Cleanup worker (08 Section 3.7, 05 Section 12.3). The same worker owns the
+    # hourly scene-workspace retention sweep and the session-cleanup job.
     cleanup_batch_size: int = 20
     cleanup_poll_interval_seconds: int = 15
     cleanup_max_attempts: int = 3
     cleanup_task_time_limit_seconds: int = 600
+    session_cleanup_interval_seconds: int = 3600
 
     # Transactional outbox dispatcher (05 Section 13.6, 08 Section 3.9).
     outbox_batch_size: int = 50
@@ -153,6 +155,14 @@ class Settings(BaseSettings):
 
     session_ttl_hours: int = 24
     session_cookie_secure: bool = False
+    # In-process fixed-window limiter for the unauthenticated auth endpoints.
+    # It protects the password-verification endpoint from online guessing and
+    # the registration endpoint from bulk account creation. Counters are
+    # per-process; see docs/reviews/phase9_closeout.md Section 7 for the
+    # single-instance scope.
+    auth_rate_limit_enabled: bool = True
+    auth_rate_limit_attempts: int = 10
+    auth_rate_limit_window_seconds: int = 60
     # Signs the session-bound CSRF token. Must be overridden in production.
     csrf_secret: str = Field(default=DEFAULT_DEV_CSRF_SECRET, repr=False)
     password_min_length: int = 8
@@ -291,6 +301,9 @@ class Settings(BaseSettings):
         if self.cleanup_task_time_limit_seconds < 1:
             message = "cleanup_task_time_limit_seconds must be at least 1"
             raise ValueError(message)
+        if self.session_cleanup_interval_seconds < 60:
+            message = "session_cleanup_interval_seconds must be at least 60"
+            raise ValueError(message)
         if self.outbox_batch_size < 1:
             message = "outbox_batch_size must be at least 1"
             raise ValueError(message)
@@ -411,6 +424,12 @@ class Settings(BaseSettings):
         if self.session_ttl_hours < 1:
             message = "session_ttl_hours must be at least 1"
             raise ValueError(message)
+        if self.auth_rate_limit_attempts < 1:
+            message = "auth_rate_limit_attempts must be at least 1"
+            raise ValueError(message)
+        if self.auth_rate_limit_window_seconds < 1:
+            message = "auth_rate_limit_window_seconds must be at least 1"
+            raise ValueError(message)
         if self.password_min_length < 8:
             message = "password_min_length must be at least 8"
             raise ValueError(message)
@@ -445,6 +464,7 @@ class Settings(BaseSettings):
             "cleanup_poll_interval_seconds": self.cleanup_poll_interval_seconds,
             "cleanup_max_attempts": self.cleanup_max_attempts,
             "cleanup_task_time_limit_seconds": self.cleanup_task_time_limit_seconds,
+            "session_cleanup_interval_seconds": self.session_cleanup_interval_seconds,
             "outbox_batch_size": self.outbox_batch_size,
             "outbox_poll_interval_seconds": self.outbox_poll_interval_seconds,
             "outbox_retry_base_seconds": self.outbox_retry_base_seconds,
@@ -509,6 +529,9 @@ class Settings(BaseSettings):
             "storage_root": str(self.storage_root),
             "session_ttl_hours": self.session_ttl_hours,
             "session_cookie_secure": self.session_cookie_secure,
+            "auth_rate_limit_enabled": self.auth_rate_limit_enabled,
+            "auth_rate_limit_attempts": self.auth_rate_limit_attempts,
+            "auth_rate_limit_window_seconds": self.auth_rate_limit_window_seconds,
             "password_min_length": self.password_min_length,
             "password_max_length": self.password_max_length,
             "max_upload_size_mb": self.max_upload_size_mb,

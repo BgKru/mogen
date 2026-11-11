@@ -1,0 +1,248 @@
+# ---------------------------------------------------------------------------
+# Production overlay for the MVP release (roadmap 10.1; 08_infrastructure.md
+# Sections 2.4, 4, 5, 8, 9, 12 and 13).
+#
+# Usage (always layered on the base file; the GPU overlay is optional):
+#
+#   docker compose --env-file .env.production \
+#     -f compose.yaml -f compose.prod.yaml -f compose.gpu.yaml up -d --build
+#
+# What this overlay changes relative to the development stack:
+#
+#   * backend / ML workers build the `runtime` image target (no test tooling);
+#   * the frontend builds the nginx `production` stage, serves the static bundle,
+#     terminates TLS and proxies /api/ and /health/ (the only published ports);
+#   * PostgreSQL, Redis and the API are no longer published on the host;
+#   * APP_ENV=production, DEBUG=false, API docs off, Secure cookies on, and the
+#     application refuses to start with the development CSRF secret;
+#   * Celery beat runs as its own service instead of inside cleanup-worker;
+#   * a scheduled backup service writes PostgreSQL dumps and /data/projects
+#     archives to a host directory outside the Docker data root;
+#   * every long-running service has bounded json-file log rotation.
+#
+# Secrets come from the environment file, never from this file. Required
+# variables fail `docker compose config` when unset:
+#   POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD, CSRF_SECRET, PUBLIC_ORIGIN
+# ---------------------------------------------------------------------------
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-10m}"
+    max-file: "${LOG_MAX_FILES:-5}"
+
+# Settings shared by every backend-image process. APP_ENV=production makes the
+# Settings validator reject the development CSRF secret and non-Secure cookies,
+# including in the migration, beat and worker processes that import Settings.
+x-prod-backend-env: &prod-backend-env
+  APP_ENV: production
+  DEBUG: "false"
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  APP_VERSION: ${APP_VERSION:-1.0.0}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+  CSRF_SECRET: ${CSRF_SECRET:?CSRF_SECRET must be set}
+  SESSION_COOKIE_SECURE: "true"
+
+services:
+  db:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    # INF-AC-20: the database is reachable only on the internal network.
+    ports: !reset []
+    logging: *default-logging
+
+  redis:
+    ports: !reset []
+    logging: *default-logging
+
+  migration:
+    build:
+      target: runtime
+    image: mogen-api:1.0.0
+    environment:
+      <<: *prod-backend-env
+    logging: *default-logging
+
+  api:
+    build:
+      target: runtime
+    image: mogen-api:1.0.0
+    # The proxy is the only public entry point. Trusting its forwarded headers
+    # keeps request.client (used by the auth rate limiter) at the real peer
+    # address; the API itself has no host port.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    environment:
+      <<: *prod-backend-env
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+      CORS_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN must be set}
+    ports: !reset []
+    logging: *default-logging
+
+  cleanup-worker:
+    build:
+      target: runtime
+    image: mogen-api:1.0.0
+    # Production separates beat (see the `beat` service) from the worker.
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - worker
+      - -Q
+      - file_cleanup
+      - --concurrency=${CLEANUP_WORKER_CONCURRENCY:-2}
+      - --prefetch-multiplier=1
+      - --loglevel=${LOG_LEVEL:-INFO}
+    environment:
+      <<: *prod-backend-env
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+    logging: *default-logging
+
+  beat:
+    build:
+      context: ./backend
+      target: runtime
+    image: mogen-api:1.0.0
+    restart: unless-stopped
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - beat
+      - --loglevel=${LOG_LEVEL:-INFO}
+      - --schedule=/tmp/celerybeat-schedule
+      - --pidfile=/tmp/celerybeat.pid
+    environment:
+      <<: *prod-backend-env
+      WORKER_SERVICE_NAME: beat
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -s /tmp/celerybeat.pid && kill -0 $$(cat /tmp/celerybeat.pid)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    networks:
+      - internal
+
+  model-init:
+    build:
+      target: runtime
+    image: mogen-object-worker:1.0.0
+    logging: *default-logging
+
+  object-worker:
+    build:
+      target: runtime
+    image: mogen-object-worker:1.0.0
+    environment:
+      <<: *prod-backend-env
+      WORKER_SERVICE_NAME: object-worker
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+    logging: *default-logging
+
+  scene-worker:
+    build:
+      target: runtime
+    image: mogen-scene-worker:1.0.0
+    environment:
+      <<: *prod-backend-env
+      WORKER_SERVICE_NAME: scene-worker
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+    logging: *default-logging
+
+  outbox-dispatcher:
+    build:
+      target: runtime
+    image: mogen-api:1.0.0
+    environment:
+      <<: *prod-backend-env
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+    logging: *default-logging
+
+  task-recovery:
+    build:
+      target: runtime
+    image: mogen-api:1.0.0
+    environment:
+      <<: *prod-backend-env
+    logging: *default-logging
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    image: mogen-frontend:1.0.0
+    # Only the reverse proxy is public (INF-AC-20). Override the development
+    # Vite port entirely instead of appending to it.
+    ports: !override
+      - "${PUBLIC_HTTP_PORT:-80}:80"
+      - "${PUBLIC_HTTPS_PORT:-443}:443"
+    volumes:
+      - ${TLS_CERT_DIR:-./infrastructure/certs}:/etc/nginx/certs:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --no-check-certificate -q -O /dev/null https://127.0.0.1/healthz || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+  backup:
+    build:
+      context: ./infrastructure/backup
+    image: mogen-backup:1.0.0
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+    volumes:
+      # Read-only application files and a destination outside the Docker data
+      # root. A Docker volume is not a backup (08 Section 12.1).
+      - app_data:/data:ro
+      - ${BACKUP_HOST_DIR:-./.backups}:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test -f "$${BACKUP_DIR}/.backup-heartbeat"
+          && [ $$(( $$(date +%s) - $$(stat -c %Y "$${BACKUP_DIR}/.backup-heartbeat") ))
+          -lt $$(( $${BACKUP_INTERVAL_SECONDS} * 2 )) ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    logging: *default-logging
+    networks:
+      - internal

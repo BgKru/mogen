@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory, session_scope
 from app.services.cleanup_service import CleanupService, CleanupSummary
+from app.services.session_cleanup_service import SessionCleanupResult, SessionCleanupService
 from app.services.workspace_retention_service import (
     RetentionSummary,
     SceneWorkspaceRetentionService,
@@ -31,6 +32,7 @@ from app.services.workspace_retention_service import (
 from app.storage import LocalStorage, StorageBackend
 from app.tasks.celery_app import (
     CLEANUP_TASK_NAME,
+    SESSION_CLEANUP_TASK_NAME,
     WORKSPACE_SWEEP_TASK_NAME,
     celery_app,
 )
@@ -88,6 +90,16 @@ def run_workspace_sweep(
         return SceneWorkspaceRetentionService(session, settings).prune()
 
 
+def run_session_cleanup(*, session_factory: sessionmaker[Session]) -> SessionCleanupResult:
+    """Delete expired and revoked sessions without Celery.
+
+    Kept broker-free so the scheduled session cleanup is testable against a
+    scratch database (09_testing.md Section 7.5).
+    """
+    with session_scope(session_factory) as session:
+        return SessionCleanupService(session).prune()
+
+
 @celery_app.task(name=CLEANUP_TASK_NAME, bind=True)
 def cleanup_storage_task(self: object, job_id: str | None = None) -> dict[str, int]:
     """Process queued cleanup jobs and report the cycle summary."""
@@ -138,3 +150,30 @@ def cleanup_scene_workspaces_task() -> dict[str, int]:
         extra={"operation": "workspace_retention", "workspace_usage": summary.as_dict()},
     )
     return summary.as_dict()
+
+
+@celery_app.task(name=SESSION_CLEANUP_TASK_NAME)
+def cleanup_sessions_task() -> dict[str, int]:
+    """Delete expired and revoked authentication sessions.
+
+    Runs hourly from the cleanup worker's beat schedule. Only terminal rows are
+    removed; a session that is still valid is never touched, so a running user
+    is not logged out by this job.
+    """
+    settings = get_settings()
+    session_factory, _storage = _runtime_for(settings)
+    result = run_session_cleanup(session_factory=session_factory)
+    logger.info(
+        "session_cleanup_finished expired=%d revoked=%d",
+        result.expired_removed,
+        result.revoked_removed,
+        extra={
+            "operation": "session_cleanup",
+            "expired_removed": result.expired_removed,
+            "revoked_removed": result.revoked_removed,
+        },
+    )
+    return {
+        "expired_removed": result.expired_removed,
+        "revoked_removed": result.revoked_removed,
+    }

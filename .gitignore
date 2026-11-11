@@ -5,9 +5,19 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 *.pem
 *.key
 secrets/
+
+# TLS certificates are deployment secrets and are mounted, never committed.
+infrastructure/certs/*
+!infrastructure/certs/README.md
+!infrastructure/certs/.gitkeep
+
+# Scheduled backup destination (host bind mount). Copy it off-host; never
+# commit database dumps or user asset archives.
+/.backups/
 
 # ---------------------------------------------------------------------------
 # Python backend
@@ -35,6 +45,7 @@ htmlcov/
 node_modules/
 dist/
 dist-ssr/
+coverage/
 .vite/
 *.local
 npm-debug.log*

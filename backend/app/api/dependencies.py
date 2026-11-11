@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.exceptions import AppError
+from app.core.rate_limit import FixedWindowRateLimiter
 from app.core.security import (
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
@@ -35,6 +37,8 @@ from app.services.image_service import ImageService
 from app.services.project_service import ProjectService
 from app.services.result_service import ResultService
 from app.storage import LocalStorage, StorageBackend
+
+logger = logging.getLogger(__name__)
 
 
 def get_settings(request: Request) -> Settings:
@@ -200,3 +204,43 @@ def require_csrf(
         token=cookie_token,
     ):
         raise AppError(403, "CSRF_VALIDATION_FAILED", "CSRF validation failed.")
+
+
+def enforce_auth_rate_limit(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
+    """Reject an unauthenticated auth request after too many attempts.
+
+    The counter is keyed by the request path and the socket peer address, so
+    login and registration have independent budgets and one client cannot
+    exhaust another's. ``Retry-After`` tells a well-behaved client when the
+    current window ends. A proxy deployment should terminate with the real
+    client address (``request.client``); forwarded headers are intentionally
+    not trusted here because they are client-controlled.
+    """
+    if not settings.auth_rate_limit_enabled:
+        return
+    limiter: FixedWindowRateLimiter | None = getattr(request.app.state, "auth_rate_limiter", None)
+    if limiter is None:
+        return
+    client = request.client.host if request.client is not None else "unknown"
+    key = f"{request.url.path}:{client}"
+    allowed, retry_after = limiter.hit(key)
+    if allowed:
+        return
+    logger.warning(
+        "auth_rate_limit_reached",
+        extra={
+            "operation": "auth_rate_limit",
+            "path": request.url.path,
+            "client": client,
+            "retry_after_seconds": retry_after,
+        },
+    )
+    raise AppError(
+        429,
+        "RATE_LIMITED",
+        "Too many authentication attempts. Please try again later.",
+        headers={"Retry-After": str(retry_after)},
+    )

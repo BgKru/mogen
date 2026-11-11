@@ -2,130 +2,168 @@
 
 Client-server application for generating 3D models from photographs.
 
-Two generation modes:
+- **Object generation** — one photograph, TripoSR inference, GLB with vertex
+  colours.
+- **Scene reconstruction** — multiple overlapping photographs, COLMAP sparse
+  reconstruction + OpenMVS dense reconstruction and texturing, self-contained
+  textured GLB.
 
-- **Object generation** — a single 3D object from one photograph, using TripoSR.
-- **Scene reconstruction** — an environment from multiple photographs, using COLMAP and OpenMVS.
+Generation runs asynchronously on dedicated GPU workers. Results are stored
+durably, rendered in a browser (React Three Fiber) and downloadable.
 
-Generated assets are delivered as GLB and visualized in the browser.
+**Current release: 1.0.0** — see [`VERSION`](VERSION) and
+[`docs/releases/v1.0.0.md`](docs/releases/v1.0.0.md).
 
-## Project status
+## Status
 
-Phases 0–8 are complete: specification consolidation, infrastructure, database/backend foundation, frontend integration, background processing, TripoSR object generation, COLMAP/OpenMVS scene reconstruction, the unified 3D viewer with result management, and the Phase 8 reliability, security and optimization work (verification suites, superseded-result cleanup, scene-workspace retention, performance baseline and backup/restore procedures). Phase 9 (comprehensive testing and quality assurance) is next.
+Phases 0–10 are complete. The MVP provides registration/authentication, project
+management, image upload, real TripoSR object generation, real COLMAP/OpenMVS
+scene reconstruction, asynchronous task tracking, browser viewing, GLB download,
+failure/retry handling and durable projects/assets. Phase 10 added the
+production images and overlay, the nginx TLS reverse proxy, Secure cookies,
+scheduled backups, the deployment verification, user/developer documentation and
+the versioned release record.
 
 | Component | Status |
 |---|---|
-| PostgreSQL 17.11 service | Running and healthy |
-| Redis 7.4.12 service | Running and healthy |
-| Backend API (FastAPI) | Implemented: authentication, projects, image upload/content/deletion, generation start/status, result/download, health endpoints |
-| Migration service | Implemented: applies Alembic migrations before the API starts |
-| Frontend (React + Vite) | Implemented: auth, dashboard, project creation, image upload, project details, object generation and scene reconstruction panels |
-| Cleanup worker | Implemented: Celery `file_cleanup` worker executing queued storage cleanup jobs |
-| Object worker | Implemented: real TripoSR inference in the dedicated `mogen-object-worker:dev` image |
-| Scene worker | Implemented: real COLMAP 4.2.1 + OpenMVS 2.4.0 reconstruction in the dedicated `mogen-scene-worker:dev` image |
-| Outbox dispatcher and task recovery | Implemented as independent processes with heartbeat health checks |
-| 3D viewer and result-management UI | Implemented: unified React Three Fiber viewer, authorized GLB loading, camera controls, model information, download and result states |
+| PostgreSQL 17.11 | Persistent metadata; Alembic revision `1f302d830cf9` |
+| Redis 7.4.12 | Celery broker only (DB 1); never the source of truth |
+| Backend API (FastAPI) | Auth, projects, uploads, generation/status, result/download, health |
+| Migration service | `alembic upgrade head` before the API/workers start |
+| Frontend | React 19 + Vite; auth, dashboard, creation, uploads, details, generation panels, 3D viewer |
+| Object worker | Real TripoSR on CUDA in `mogen-object-worker:1.0.0` |
+| Scene worker | Real COLMAP 4.2.1 + OpenMVS 2.4.0 in `mogen-scene-worker:1.0.0` |
+| Outbox dispatcher / task recovery | Independent processes with heartbeat health checks |
+| Production release | nginx TLS proxy + static build, runtime images, separate beat, scheduled backup (`compose.prod.yaml`) |
 
-Phase 7 added the unified 3D result viewer and dedicated result workspace: authorized GLB retrieval through the existing download endpoint, React Three Fiber rendering, OrbitControls, model information, download and explicit empty/error/previous-result states. Phase 8 added the reliability and security verification, superseded-result cleanup, scene-workspace retention, the performance baseline and the backup/restore procedures. The verified baseline is **509 backend**, **130 frontend** and **75 scene ML / 35 object ML** tests, with the real TripoSR object and COLMAP/OpenMVS scene loaded and inspected in Edge; see [`docs/reviews/phase7_closeout.md`](docs/reviews/phase7_closeout.md) and [`docs/reviews/phase8_closeout.md`](docs/reviews/phase8_closeout.md).
+Verified matrix at 1.0.0: **525 backend**, **148 frontend**, **75 scene ML + 1
+skipped**, **35 object ML + 1 skipped**, **17/17 browser E2E**. The production
+deployment verification is recorded in
+[`docs/reviews/phase10_closeout.md`](docs/reviews/phase10_closeout.md).
 
 ## Technology stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React, TypeScript, Vite, Tailwind CSS, Three.js |
-| Backend | Python 3.11, FastAPI, SQLAlchemy, Alembic |
-| Database | PostgreSQL 17 |
-| Broker | Redis 7.4 |
-| Background processing | Celery |
-| Object generation | TripoSR |
-| Scene reconstruction | COLMAP, OpenMVS |
-| Infrastructure | Docker, Docker Compose |
+| Frontend | React 19.3.1, TypeScript 5.9.3, Vite 8, Tailwind CSS 4, Three.js 0.187.0 / React Three Fiber 9.8.2 / Drei 10.7.9 |
+| Backend | Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Pydantic |
+| Database | PostgreSQL 17.11 |
+| Broker | Redis 7.4.12 |
+| Background processing | Celery 5.7.0 |
+| Object generation | TripoSR (pinned commit/checkpoint), PyTorch 2.14.1/CUDA 12.6 |
+| Scene reconstruction | COLMAP 4.2.1, OpenMVS 2.4.0, OpenCV 4.12, CGAL 6.0.1 |
+| Infrastructure | Docker, Docker Compose, nginx |
 
-Pinned versions, licensing decisions and hardware requirements are recorded in [`docs/architecture/phase0_decisions.md`](docs/architecture/phase0_decisions.md).
+Pinned versions, licensing decisions and the hardware profile are in
+[`docs/architecture/phase0_decisions.md`](docs/architecture/phase0_decisions.md)
+and [`docs/releases/v1.0.0.md`](docs/releases/v1.0.0.md).
 
 ## Repository layout
 
 ```text
 mogen/
-├── docs/                     specifications, architecture records, reviews, agent guide
-├── frontend/                 React application
-├── backend/                  FastAPI application
-├── ml/                       object generation, scene reconstruction, workers
-├── infrastructure/           docker, nginx, scripts
-├── tests/                    cross-component tests
-├── compose.yaml              development stack
-├── .env.example              environment template
-└── README.md
+├── backend/                  FastAPI application + Alembic + tests
+├── frontend/                 React application + nginx production config
+├── ml/
+│   ├── object_generation/    TripoSR worker image and pipeline
+│   ├── scene_reconstruction/ COLMAP/OpenMVS worker image and pipeline
+│   └── workers/              reserved placeholder
+├── infrastructure/
+│   ├── backup/               scheduled backup image and script
+│   ├── certs/                mounted TLS material (gitignored)
+│   └── scripts/              self-signed certificate helper
+├── e2e/                      Playwright browser suite
+├── docs/                     specifications, architecture, operations, reviews, guides
+├── compose.yaml              development stack (eleven services)
+├── compose.prod.yaml         production overlay
+├── compose.gpu.yaml          GPU reservation override
+├── .env.example              development environment template
+├── .env.production.example   production environment template
+└── VERSION                   1.0.0
 ```
 
 ## Prerequisites
 
-- Docker Engine 24 or newer with Compose v2, or Docker Desktop on Windows.
-- Windows only: WSL2 with the Docker data root on a drive with at least 50 GB free.
-- GPU work requires an NVIDIA GPU, a compatible driver and the NVIDIA Container Toolkit. The application must also run CPU-only, with explicit errors when hardware is missing.
+- Docker Engine 24+ with Compose v2.24+ (or Docker Desktop on Windows).
+- Windows: WSL2 and a Docker data root with at least ~50 GB free for the ML
+  images.
+- GPU deployment: NVIDIA GPU, compatible driver and NVIDIA Container Toolkit.
+  The base stack runs CPU-only; `compose.gpu.yaml` reserves the GPU for both ML
+  workers.
 
-## Quick start
+## Development quick start
 
-1. Create the local environment file:
+```bash
+cp .env.example .env
+docker compose config -q
+docker compose up -d --build          # add -f compose.gpu.yaml for GPU
+```
 
-   ```bash
-   cp .env.example .env
-   ```
+The `migration` service applies the schema and exits 0; `model-init` populates
+the pinned TripoSR cache and exits 0. The object worker loads the model once
+(4–5 minutes; 600 s health start period).
 
-2. Validate the configuration:
+| Endpoint | URL |
+|---|---|
+| Application | http://localhost:5173 |
+| API | http://127.0.0.1:8000 |
+| Swagger | http://127.0.0.1:8000/docs |
+| Readiness | http://127.0.0.1:8000/health/ready |
 
-   ```bash
-   docker compose config
-   ```
+Use `http://localhost:5173` (not `127.0.0.1`) for browser flows: the CSRF origin
+allowlist matches that origin.
 
-3. Build and start the stack:
+Stop with `docker compose down`; **never** `down -v` unless you intend to delete
+the database, uploads and model cache.
 
-   ```bash
-   docker compose up -d --build
-   ```
+## Production deployment
 
-   The `migration` service applies Alembic migrations and exits; the API starts only after it succeeds.
+```bash
+cp .env.production.example .env.production    # fill secrets and PUBLIC_ORIGIN
+# install infrastructure/certs/tls.crt + tls.key (or generate a self-signed pair)
+docker compose --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml -f compose.gpu.yaml up -d --build
+```
 
-4. Check health:
+Only nginx publishes ports (80/443). PostgreSQL, Redis, the API and the workers
+are internal. API docs are disabled, cookies are Secure, and a `backup` service
+writes PostgreSQL dumps plus `/data/projects` archives to `BACKUP_HOST_DIR`.
+The complete procedure, verification commands, upgrade/rollback notes and
+troubleshooting are in [`docs/deployment.md`](docs/deployment.md).
 
-   ```bash
-   docker compose ps
-   curl http://127.0.0.1:8000/health/ready
-   curl http://127.0.0.1:8000/health/dependencies
-   docker compose exec db pg_isready -U app -d app
-   docker compose exec redis redis-cli ping
-   ```
+## Tests
 
-   The application is served at `http://127.0.0.1:5173`. Interactive API documentation is at `http://127.0.0.1:8000/docs` in development.
+```bash
+docker compose run --rm --no-deps api pytest
+docker compose run --rm --no-deps api ruff check .
+docker compose run --rm --no-deps api ruff format --check .
+docker compose run --rm --no-deps api alembic check
+docker compose run --rm --no-deps api pip check
+docker run --rm mogen-object-worker:dev python -m pytest /opt/object_generation/tests -q
+docker run --rm mogen-scene-worker:dev python -m pytest /opt/scene_reconstruction/tests -q
+docker run --rm mogen-frontend:dev npm run lint
+docker run --rm mogen-frontend:dev npm run typecheck
+docker run --rm mogen-frontend:dev npm run test:run
+docker run --rm mogen-frontend:dev npm run build
+```
 
-5. Run tests and lint:
-
-   ```bash
-   docker compose run --rm --no-deps api pytest
-   docker compose run --rm --no-deps api ruff check .
-   docker run --rm mogen-frontend:dev npm run lint
-   docker run --rm mogen-frontend:dev npm run typecheck
-   docker run --rm mogen-frontend:dev npm run test:run
-   ```
-
-6. Stop:
-
-   ```bash
-   docker compose down
-   ```
-
-`docker compose down -v` also deletes the data volumes. It is destructive: use it only when you intend to lose local data.
+The browser suite is in [`e2e/`](e2e/README.md); CI workflow files are in
+`.github/workflows/`.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| [`docs/AI_DEVELOPMENT_GUIDE.md`](docs/AI_DEVELOPMENT_GUIDE.md) | Workflow, quality gates and rules for implementation work |
-| [`docs/HANDOFF.md`](docs/HANDOFF.md) | Current project state, tooling traps and the next task, for a new session |
-| [`docs/specifications/`](docs/specifications/) | Product, UI, frontend, backend, database, ML, infrastructure and testing specifications |
-| [`docs/specifications/10_development_roadmap.md`](docs/specifications/10_development_roadmap.md) | Implementation order and milestones |
+| [`docs/user_guide.md`](docs/user_guide.md) | Registration, projects, photograph preparation, generation, viewer, download |
+| [`docs/deployment.md`](docs/deployment.md) | Production configuration, TLS, startup, verification, backups, upgrades |
+| [`docs/developer_guide.md`](docs/developer_guide.md) | Repository map, environment, Compose, ML workers, testing |
+| [`docs/api.md`](docs/api.md) | Endpoint summary and error/cookie conventions |
+| [`docs/operations/backup_restore.md`](docs/operations/backup_restore.md) | Manual and scheduled backup, restoration and consistency checks |
+| [`docs/specifications/`](docs/specifications/) | Product, UI, frontend, backend, database, ML, infrastructure, testing, roadmap |
 | [`docs/architecture/`](docs/architecture/) | System architecture, API contracts, data flows, Phase 0 decisions |
-| [`docs/operations/backup_restore.md`](docs/operations/backup_restore.md) | Backup, restoration and post-restore consistency verification |
-| [`docs/reviews/`](docs/reviews/) | Phase close-out reviews with task-by-task and criterion-by-criterion evidence |
+| [`docs/reviews/`](docs/reviews/) | Phase close-out reviews with evidence |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | Session continuation state and tooling traps |
+| [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md) | Short next-session entry point |
 
-The specifications are the source of truth. Where this file and a specification disagree, the specification governs.
+The specifications are the source of truth. Where this file and a specification
+disagree, the specification governs.
