@@ -65,8 +65,15 @@ def test_redact_url_without_password_is_unchanged() -> None:
     assert redact_url(url) == url
 
 
-def test_cleanup_worker_defaults() -> None:
-    settings = Settings()
+def test_cleanup_worker_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shipped defaults, independent of the environment running the tests.
+
+    CI exports ``CELERY_BROKER_URL`` so the integration tests reach the Redis
+    container; that variable is meant for those tests, not for asserting the
+    application default.
+    """
+    monkeypatch.delenv("CELERY_BROKER_URL", raising=False)
+    settings = Settings(_env_file=None)
 
     assert settings.cleanup_batch_size == 20
     assert settings.cleanup_poll_interval_seconds == 15

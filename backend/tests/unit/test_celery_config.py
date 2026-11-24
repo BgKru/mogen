@@ -28,6 +28,25 @@ from app.tasks.celery_app import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _isolate_celery_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep ambient ``CELERY_*`` variables out of these tests.
+
+    Celery's ``Settings`` properties read the broker and result-backend URLs
+    straight from the process environment and let those variables win over the
+    values passed to ``Celery(...)``. CI exports ``CELERY_BROKER_URL`` for the
+    integration tests, so without this fixture the broker assertions would test
+    the CI environment instead of ``create_celery_app``.
+    """
+    for variable in (
+        "CELERY_BROKER_URL",
+        "CELERY_BROKER_READ_URL",
+        "CELERY_BROKER_WRITE_URL",
+        "CELERY_RESULT_BACKEND",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+
+
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "app_env": "test",
