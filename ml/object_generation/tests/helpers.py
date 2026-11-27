@@ -15,8 +15,10 @@ BIN_CHUNK = 0x004E4942
 def build_glb_bytes(
     *,
     include_colors: bool = True,
+    include_normals: bool = False,
     positions: np.ndarray | None = None,
     indices: np.ndarray | None = None,
+    normals: np.ndarray | None = None,
 ) -> bytes:
     """Build a minimal, self-contained glTF 2.0 binary with one mesh."""
     if positions is None:
@@ -67,6 +69,23 @@ def build_glb_bytes(
         attributes["COLOR_0"] = len(accessors) - 1
         offset += len(color_bytes)
 
+    if include_normals:
+        if normals is None:
+            normals = np.tile(np.array([[0.0, 0.0, 1.0]], dtype=np.float32), (len(positions), 1))
+        normal_bytes = normals.astype(np.float32).tobytes()
+        chunks.append(normal_bytes)
+        buffer_views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(normal_bytes)})
+        accessors.append(
+            {
+                "bufferView": len(buffer_views) - 1,
+                "componentType": 5126,
+                "count": int(len(normals)),
+                "type": "VEC3",
+            }
+        )
+        attributes["NORMAL"] = len(accessors) - 1
+        offset += len(normal_bytes)
+
     index_bytes = indices.astype(np.uint16).tobytes()
     chunks.append(index_bytes)
     buffer_views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(index_bytes)})
@@ -111,4 +130,34 @@ def colored_box():
     mesh = trimesh.creation.box(extents=(1.0, 0.8, 0.6))
     colors = np.tile(np.array([[200, 60, 30, 255]], dtype=np.uint8), (len(mesh.vertices), 1))
     mesh.visual.vertex_colors = colors
+    return mesh
+
+
+def textured_box(texture_size: int = 64):
+    """Return a box with UVs and a PBR base-colour texture (SF3D-like output)."""
+    import numpy as np
+    import trimesh
+    from PIL import Image
+
+    mesh = trimesh.creation.box(extents=(1.0, 0.8, 0.6))
+    uv = np.array(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )[: len(mesh.vertices)]
+    image = Image.new("RGB", (texture_size, texture_size), (200, 80, 40))
+    material = trimesh.visual.material.PBRMaterial(
+        baseColorTexture=image,
+        roughnessFactor=0.6,
+        metallicFactor=0.1,
+    )
+    mesh.visual = trimesh.visual.texture.TextureVisuals(uv=uv, material=material)
     return mesh

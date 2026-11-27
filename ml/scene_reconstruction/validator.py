@@ -8,12 +8,15 @@ a file that merely exists is not a valid, self-contained scene asset.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from .exceptions import GLB_VALIDATION_FAILED, SceneExportError
 
@@ -54,6 +57,8 @@ class SceneGLBValidation:
     extensions_used: tuple[str, ...]
     bounding_box: dict[str, float]
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    has_normals: bool = False
+    has_pbr_materials: bool = False
 
     def as_metadata(self) -> dict[str, Any]:
         return {
@@ -66,8 +71,11 @@ class SceneGLBValidation:
             "images_count": self.images_count,
             "has_texture_coordinates": self.has_texture_coordinates,
             "has_embedded_textures": self.has_embedded_textures,
+            "has_normals": self.has_normals,
+            "has_pbr_materials": self.has_pbr_materials,
             "extensions_used": list(self.extensions_used),
             "bounding_box": self.bounding_box,
+            "warnings": list(self.warnings),
         }
 
 
@@ -192,6 +200,107 @@ def read_glb_document(path: Path) -> tuple[dict[str, Any], bytes]:
     return _parse_container(data)
 
 
+def _image_payload(document: dict[str, Any], binary_chunk: bytes, image: dict[str, Any]) -> bytes:
+    """Return and integrity-check an embedded image payload."""
+    views = document.get("bufferViews") or []
+    index = image.get("bufferView")
+    if not isinstance(index, int) or not 0 <= index < len(views):
+        raise _invalid("A texture image has no embedded bufferView.")
+    view = views[index]
+    offset = int(view.get("byteOffset", 0))
+    length = int(view.get("byteLength", 0))
+    if offset < 0 or length <= 0 or offset + length > len(binary_chunk):
+        raise _invalid("A texture image extends past the BIN chunk.")
+    payload = binary_chunk[offset : offset + length]
+    try:
+        with Image.open(io.BytesIO(payload)) as opened:
+            opened.verify()
+        with Image.open(io.BytesIO(payload)) as opened:
+            if opened.width < 1 or opened.height < 1:
+                raise ValueError("empty image")
+    except Exception as exc:
+        raise _invalid("A texture image is corrupt or unreadable.") from exc
+    return payload
+
+
+def _texture_slot(
+    document: dict[str, Any],
+    binary_chunk: bytes,
+    slot: Any,
+    *,
+    slot_name: str,
+    attributes: dict[str, Any],
+) -> None:
+    if not isinstance(slot, dict):
+        raise _invalid(f"{slot_name} is not an object.")
+    if "TEXCOORD_0" not in attributes:
+        raise _invalid(f"{slot_name} requires TEXCOORD_0 on the primitive.")
+    texture_index = slot.get("index")
+    textures = document.get("textures") or []
+    images = document.get("images") or []
+    if not isinstance(texture_index, int) or not 0 <= texture_index < len(textures):
+        raise _invalid(f"{slot_name} references a missing texture.")
+    source = textures[texture_index].get("source")
+    if not isinstance(source, int) or not 0 <= source < len(images):
+        raise _invalid(f"{slot_name} references a missing image.")
+    _image_payload(document, binary_chunk, images[source])
+
+
+def _factor(value: Any, name: str, *, maximum: float = 1.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(f"{name} must be a number.")
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0 or number > maximum:
+        raise _invalid(f"{name} is outside its valid range.")
+    return number
+
+
+def _validate_material_facts(
+    document: dict[str, Any],
+    binary_chunk: bytes,
+    material: dict[str, Any],
+    attributes: dict[str, Any],
+) -> bool:
+    """Validate the metallic-roughness factors and embedded texture references."""
+    pbr = material.get("pbrMetallicRoughness")
+    if not isinstance(pbr, dict):
+        return False
+    base = pbr.get("baseColorFactor")
+    if base is not None:
+        if not isinstance(base, list) or len(base) != 4:
+            raise _invalid("baseColorFactor must have four components.")
+        for component in base:
+            _factor(component, "baseColorFactor")
+    for name in ("metallicFactor", "roughnessFactor"):
+        if pbr.get(name) is not None:
+            _factor(pbr[name], name)
+    for slot_name in ("baseColorTexture", "metallicRoughnessTexture"):
+        if pbr.get(slot_name) is not None:
+            _texture_slot(
+                document,
+                binary_chunk,
+                pbr[slot_name],
+                slot_name=slot_name,
+                attributes=attributes,
+            )
+    for slot_name in ("normalTexture", "occlusionTexture", "emissiveTexture"):
+        if material.get(slot_name) is not None:
+            _texture_slot(
+                document,
+                binary_chunk,
+                material[slot_name],
+                slot_name=slot_name,
+                attributes=attributes,
+            )
+    if material.get("emissiveFactor") is not None:
+        emissive = material["emissiveFactor"]
+        if not isinstance(emissive, list) or len(emissive) != 3:
+            raise _invalid("emissiveFactor must have three components.")
+        for component in emissive:
+            _factor(component, "emissiveFactor")
+    return True
+
+
 def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> SceneGLBValidation:
     """Validate an in-memory GLB and return its structural and texture facts."""
     document, binary_chunk = _parse_container(data)
@@ -241,6 +350,7 @@ def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> S
         length = int(views[view_index].get("byteLength", 0))
         if length <= 0:
             raise _invalid(f"Image {image_index} has an empty bufferView.")
+        _image_payload(document, binary_chunk, image)
 
     for texture_index, texture in enumerate(textures):
         if not isinstance(texture, dict):
@@ -255,6 +365,8 @@ def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> S
     total_faces = 0
     primitives_count = 0
     has_uv = False
+    has_normals = False
+    has_pbr_materials = False
     textured_primitives = 0
     warnings: list[str] = []
 
@@ -295,7 +407,28 @@ def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> S
                 )
                 if len(uvs) != len(positions):
                     raise _invalid("TEXCOORD_0 and POSITION accessor counts differ.")
+                coordinates = [value for pair in uvs for value in pair]
+                if not all(math.isfinite(value) for value in coordinates):
+                    raise _invalid("TEXCOORD_0 contains non-finite coordinates.")
+                if coordinates and (min(coordinates) < -0.01 or max(coordinates) > 1.01):
+                    warnings.append("TEXCOORD_0 outside the unit square beyond padding tolerance")
                 has_uv = True
+
+            if "NORMAL" in attributes:
+                normals, _ = _read_accessor(
+                    document,
+                    binary_chunk,
+                    attributes["NORMAL"],
+                    expected_type="VEC3",
+                )
+                if len(normals) != len(positions):
+                    raise _invalid("NORMAL and POSITION accessor counts differ.")
+                for normal in normals:
+                    if not all(math.isfinite(value) for value in normal):
+                        raise _invalid("NORMAL contains non-finite vectors.")
+                    if math.sqrt(sum(value * value for value in normal)) <= 1e-9:
+                        raise _invalid("NORMAL contains a zero-length vector.")
+                has_normals = True
 
             indices = primitive.get("indices")
             if indices is None:
@@ -320,7 +453,11 @@ def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> S
                 if not isinstance(material_index, int) or not 0 <= material_index < len(materials):
                     raise _invalid("A primitive references a missing material.")
                 material = materials[material_index]
-                pbr = material.get("pbrMetallicRoughness") if isinstance(material, dict) else None
+                if not isinstance(material, dict):
+                    raise _invalid("A material is not an object.")
+                if _validate_material_facts(document, binary_chunk, material, attributes):
+                    has_pbr_materials = True
+                pbr = material.get("pbrMetallicRoughness")
                 if isinstance(pbr, dict):
                     base_color = pbr.get("baseColorTexture")
                     if isinstance(base_color, dict) and isinstance(base_color.get("index"), int):
@@ -328,6 +465,9 @@ def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> S
                         if not 0 <= texture_index < len(textures):
                             raise _invalid("A material references a missing texture.")
                         textured_primitives += 1
+
+    if not has_normals:
+        warnings.append("scene has no NORMAL attributes")
 
     if total_vertices < 3 or total_faces < 1:
         raise _invalid("The GLB contains no usable polygon geometry.")
@@ -367,6 +507,8 @@ def validate_scene_glb_bytes(data: bytes, *, require_textures: bool = True) -> S
             "depth": round(extents[2], 6),
         },
         warnings=tuple(warnings),
+        has_normals=has_normals,
+        has_pbr_materials=has_pbr_materials,
     )
 
 

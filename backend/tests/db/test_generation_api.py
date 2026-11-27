@@ -188,7 +188,12 @@ def test_scene_generation_snapshots_every_image_in_order(
     assert response.json()["task"]["task_type"] == "SCENE"
     task = inspection_session.get(GenerationTask, task_id)
     assert task is not None
-    assert task.parameters == {"algorithm": "COLMAP_OPENMVS", "output_format": "GLB"}
+    assert task.parameters == {
+        "algorithm": "COLMAP_OPENMVS",
+        "output_format": "GLB",
+        "representation": "MESH",
+        "method": "COLMAP_OPENMVS",
+    }
     snapshot = inspection_session.scalars(
         select(GenerationTaskImage)
         .where(GenerationTaskImage.task_id == task_id)

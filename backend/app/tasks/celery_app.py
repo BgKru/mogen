@@ -30,10 +30,15 @@ from app.core.logging import configure_logging
 
 OBJECT_GENERATION_QUEUE = "object_generation"
 SCENE_RECONSTRUCTION_QUEUE = "scene_reconstruction"
+# Dedicated queue for the opt-in neural scene representation (15 Section 4.2).
+# The mesh and splat workers run different dependency stacks, so they must not
+# consume the same queue; the dispatcher picks the queue from the persisted
+# task representation.
+SCENE_SPLAT_QUEUE = "scene_gaussian_splat"
 CLEANUP_QUEUE = "file_cleanup"
 
-ALL_QUEUES = (OBJECT_GENERATION_QUEUE, SCENE_RECONSTRUCTION_QUEUE, CLEANUP_QUEUE)
-GENERATION_QUEUES = (OBJECT_GENERATION_QUEUE, SCENE_RECONSTRUCTION_QUEUE)
+ALL_QUEUES = (OBJECT_GENERATION_QUEUE, SCENE_RECONSTRUCTION_QUEUE, SCENE_SPLAT_QUEUE, CLEANUP_QUEUE)
+GENERATION_QUEUES = (OBJECT_GENERATION_QUEUE, SCENE_RECONSTRUCTION_QUEUE, SCENE_SPLAT_QUEUE)
 
 OBJECT_GENERATION_TASK = "generate_object_task"
 SCENE_RECONSTRUCTION_TASK = "reconstruct_scene_task"
@@ -80,6 +85,10 @@ def create_celery_app(settings: Settings) -> Celery:
     )
     app.conf.update(
         task_ignore_result=settings.celery_task_ignore_result,
+        # Queue the dispatcher uses for a scene task persisted as GAUSSIAN_SPLAT.
+        # It is deployment-configurable but never overrides the persisted
+        # representation; the dispatcher always passes the queue explicitly.
+        mogen_scene_splat_queue=settings.scene_splat_worker_queue,
         task_serializer="json",
         result_serializer="json",
         accept_content=["json"],

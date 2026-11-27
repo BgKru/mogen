@@ -2,22 +2,37 @@
 
 **Purpose:** everything a new session needs to continue this project without re-deriving context. Read this first, then [`AI_DEVELOPMENT_GUIDE.md`](AI_DEVELOPMENT_GUIDE.md) and the roadmap.
 
-Last updated: 2026-11-11.
+Last updated: 2026-11-27.
 
-> **Continue with:** Phase 10 is complete and the MVP is released (1.0.0). The
-> next work is post-MVP Section 11 of the roadmap; no Phase 11 implementation has
-> started.
+> **Continue with:** Phases 2–10 are complete and the MVP is released (1.0.0).
+> Post-MVP increments 11 (advisory image-quality analysis), 12 (optional ALIKED +
+> LightGlue matching), 13 (advanced object generation) and 14 (mesh/texture
+> enhancement) are implemented. **Increment 15 (optional neural scene
+> representation, Nerfstudio Splatfacto + Gaussian PLY) is implemented and
+> verified**: the released COLMAP + OpenMVS mesh path remains the default; a
+> deployment-selected `GAUSSIAN_SPLAT` representation is persisted in the task,
+> routed to a dedicated `scene_gaussian_splat` queue, trained by the pinned
+> Splatfacto stack in a dedicated worker image, exported to the exact Nerfstudio
+> Gaussian PLY dialect, validated independently and rendered by the lazy-loaded
+> frontend renderer. Real evidence on the RTX 3060: a 300-iteration smoke PLY
+> (8 015 Gaussians, 1.99 MB), a live API task (3 000 iterations, 800 px,
+> 208 582 Gaussians, 51.7 MB PLY, PSNR 14.37/SSIM 0.478/LPIPS 0.521), an Edge
+> viewer proof and a mesh-vs-splat benchmark. The production 30 000-iteration /
+> 1 600 px profile is documented but was not executed end-to-end.
 > **Ready-to-paste continuation prompt:** [`NEXT_SESSION.md`](NEXT_SESSION.md).
-> **Confirm first:** the Phase 10 baseline (nine development services healthy plus
-> `migration` and `model-init` `Exited (0)`; 525 backend tests; 148 frontend tests;
-> 75 scene ML tests plus the skipped opt-in real-reconstruction test; 35 object ML
-> tests plus the opt-in real-model test; three worker pings; `cleanup_sessions_task`
-> and the retention task registered; fresh dispatcher/recovery heartbeat files;
-> object worker with the real TripoSR model; scene worker with COLMAP 4.2.1 and
-> OpenMVS 2.4.0; production images `:1.0.0` built and deployment-verified;
-> repository Playwright E2E suite 17/17 against the production HTTPS stack).
-> **Detailed plan:** Section 9, "Phase 8 ... (complete)", "Phase 9 ... (complete)"
-> and "Phase 10 — MVP release and documentation (complete)".
+> **Confirm first:** backend **619 passed**, scene ML **172 passed + 3 skipped**
+> (175 collected), object ML **135 passed + 3 skipped** (138 collected),
+> image-quality **47 passed**, frontend **161 passed**; Ruff/format clean for
+> changed code, `alembic check` clean, Compose base+GPU+splat `config -q` pass;
+> the eleven-service base development stack healthy (`migration`/`model-init`
+> `Exited (0)`); the splat worker starts with `splat_pipeline_ready` and the
+> baked gsplat kernel probe succeeds.
+> **Detailed plan:** [`additions/15_implementation_plan.md`](additions/15_implementation_plan.md),
+> specification [`additions/15_neural_scene_reconstruction.md`](additions/15_neural_scene_reconstruction.md),
+> close-out review [`reviews/increment15_closeout.md`](reviews/increment15_closeout.md).
+> **Next increment:** none started. The remaining optional work is a canonical
+> scene-worker image rebuild and a full 30 000-iteration artifact measurement;
+> do not start increment 16.
 > **Copy-paste prompt and resume checklist:** Section 10 and [`NEXT_SESSION.md`](NEXT_SESSION.md).
 
 ---
@@ -38,7 +53,105 @@ Phase 9 is complete at its roadmap scope (tasks 9.1–9.7): the full frontend, b
 
 Phase 10 is complete at its roadmap scope (tasks 10.1–10.6): the MVP is packaged and released as 1.0.0. `compose.prod.yaml` builds runtime images behind a pinned nginx TLS reverse proxy (only 80/443 published), sets `APP_ENV=production`, disables API docs, enforces Secure cookies and the production CSRF secret, separates Celery beat from the cleanup worker, and adds a scheduled backup service. The production stack was built, deployed and verified: registration/login, project creation, uploads, a real TripoSR object task, a real 11-image COLMAP/OpenMVS reconstruction (7.7 min), the browser viewer, authenticated GLB download, failure/retry and delete-during-processing. The full Playwright suite passed **17/17 against the production HTTPS stack**, the live auth limiter returned 429 with `Retry-After` after 10 attempts, API docs answered 404, and only the proxy ports were reachable. Data preservation was proved by identical counts (2 users, 19 projects, 17 tasks, 10 results, 141 images) and an unchanged current-result SHA-256 before and after deployment. The scheduled backup service ran and its dump/archive were restored into a scratch database and storage tree with matching counts and SHA-256. `docs/deployment.md`, `docs/developer_guide.md`, `docs/user_guide.md`, `docs/api.md`, `docs/releases/v1.0.0.md` and [`reviews/phase10_closeout.md`](reviews/phase10_closeout.md) record the configuration, procedures, versions and evidence. One production-packaging defect was found and fixed: Kombu's Redis transport imports `packaging`, which the isolated scene-worker venv lacked while the development image obtained it through `pytest`; `packaging==26.3` is now pinned explicitly and the API/scene images rebuilt. The viewer, result/download contract, outbox and reconstruction pipelines were not changed. `M9` (MVP Released) is achieved.
 
-Phase 10 was the last MVP phase. Post-MVP improvements belong to Section 11 (Future Development) of the roadmap and have not been started.
+Phase 10 was the last MVP phase. Post-MVP improvements belong to Section 11 (Future Development) of the roadmap; the first post-MVP increment is described next, and later increments have not been started.
+
+**Post-MVP increment 11 verification and rebuild (2026-11-25).** Both worker
+images were rebuilt (`mogen-object-worker:dev` and `mogen-scene-worker:dev` now
+import `/opt/image_quality`). Verified: 47 image-quality tests in both images,
+object ML 39 passed + 1 skipped, scene ML **82 passed + 1 skipped** (the
+documentation's earlier "83 passed" was off by one; corrected in the addendum),
+backend 526 passed, Ruff clean for changed code. A real OBJECT task and a real
+SCENE task completed with `image_quality.status = "OK"`; the opt-in real TripoSR
+test passed and the real COLMAP/OpenMVS proof completed. Calibration
+observations (studio-backdrop shadow clipping; bright-sky highlight clipping)
+were recorded without retuning thresholds. Evidence: Sections 13.5–13.7 of the
+increment-11 addendum.
+
+**Post-MVP increment 13: advanced object generation (2026-11-25).** TripoSR
+remains the production default and regression baseline. `ml/object_generation/`
+now has a typed generator contract (`generator_base.py`), an explicit allowlist
+factory (`generator_factory.py`), a TripoSR adapter and an opt-in Stable Fast 3D
+adapter (`sf3d/`). SF3D weights are manifest-verified and loaded from a separate
+`/models/sf3d` cache; its conflicting dependencies are installed into
+`/opt/sf3d-site` (PYTHONPATH) by a dedicated `sf3d` Dockerfile target, so the
+TripoSR runtime is untouched. Output normalization plus a textured GLB
+export/validation path preserve UVs, PBR material and the embedded base-colour
+texture; the TripoSR vertex-colour path is unchanged. Result metadata gains a
+`generator` block with the adapter name, pinned source/model revisions, timings,
+preprocessing profile and measured peak CUDA bytes; a pre-inference fallback to
+TripoSR is opt-in and recorded. `compose.sf3d.yaml` switches the single object
+worker policy and adds `sf3d-model-init`. The API image has no ML dependency and
+no public API, frontend, task-lifecycle, viewer or result contract changed.
+Hunyuan3D is blocked after the licence/territory (EU/UK/South Korea exclusion),
+12 GB VRAM and PyTorch 2.5.1/CUDA 12.4 conflict review; its settings validate
+and refuse to initialise it. Verification: object ML **76 passed + 3 skipped**,
+real TripoSR inference **1 passed**, backend **552 passed**, Ruff clean for
+changed files, Khronos glTF Validator **0 errors/0 warnings** on the textured
+fixture, benchmark TripoSR **12/12** runs (median 5.545 s, peak 4.45 GB).
+**Completed 2026-11-26:** the gated repository was opened with a classic read
+token, `/models/sf3d` was populated and checksum-verified, the real SF3D tests
+passed (2/2), a live SF3D task completed through the API (664 464-byte textured
+GLB, 2.648 s inference, peak 5.44 GB), the Edge viewer loaded it with 2 textures
+in 1.19 s, and the benchmark recorded TripoSR **12/12** (median 7.595 s) versus
+SF3D **12/12** (median 2.714 s, all textured, peak 5.48 GB). The real run exposed
+and fixed three defects: the `sf3d` package shadowing the upstream checkout under
+`pytest`, missing DINOv2/CLIP caches in the offline worker, and a `texture_baker`
+wheel compiled without CUDA kernels. Full evidence:
+[`reviews/increment13_closeout.md`](reviews/increment13_closeout.md), Section 8.
+
+**Post-MVP increment 14: mesh/texture enhancement (2026-11-26).** A shared CPU
+package `ml/mesh_enhancement/` now provides before/after metrics, conservative
+cleanup, area-weighted normals, a guarded/injectable simplification boundary and
+the enhancement manifest. Object generation runs the optional stage between the
+normalized generator output and GLB export: cleanup + normal validation are on by
+default; xatlas UV generation and deterministic vertex-colour baking are opt-in
+and produce an embedded base-colour texture with a PBR metallic-roughness
+material; a generator texture is preserved, not rebaked; simplification safely
+skips because no quadric simplifier is pinned; AI texture is a disabled protocol
+with output validation. Scene post-processing is off by default, mutates geometry
+in place, preserves OpenMVS UVs/atlases/materials/transforms, and never repeats
+`RefineMesh`/`TextureMesh`; scene UV/AI generation is rejected by configuration.
+Validators now check `NORMAL`, finite UVs, PBR factors/references and embedded
+image integrity while keeping legacy vertex-colour and scene assets valid.
+Result metadata gains a compact `enhancement` block; no public API, frontend,
+database, persisted stage, viewer or download contract changed. Verification:
+backend **573 passed**, object **135 passed + 3 skipped**, scene **136 passed +
+2 skipped**, image-quality **47 passed**, frontend **173 passed**, real TripoSR
+**1 passed**, Ruff/format clean, `pip check` clean, Khronos **0 errors/0
+warnings** on both enhanced fixtures, Three.js/Edge viewer load passed, live
+object (cleanup+normals) and live scene (post-process enabled) tasks completed.
+The 4 096 MB soft memory budget was found too low for the worker's resident
+model and raised to 8 192 MB. Full evidence:
+[`reviews/increment14_closeout.md`](reviews/increment14_closeout.md).
+
+**Post-MVP increment 12: advanced feature matching (2026-11-25).** `COLMAP SIFT`
+remains the production default and fallback. `ml/scene_reconstruction/` now has a
+small feature-backend contract (`feature_matching.py`), validated profiles
+(`feature_profiles.py`) and an opt-in ALIKED-N16 + LightGlue adapter
+(`neural_features.py`) that imports keypoints/matches through pycolmap 4.2.1 and
+runs `pycolmap.verify_matches` before the existing COLMAP mapper. Pair
+generation is deterministic (exhaustive/sequential, bounded); checkpoints are
+gated by `colmap/feature_manifest.json` covering image hashes, backend/profile,
+models, parameters, pairing, resize, verification and runtime versions;
+recoverable neural failures can fall back to a clean SIFT database with the
+reason and actual backend recorded. Diagnostics gain a compact `features` block;
+no public API, frontend, result contract or OpenMVS stage changed. The scene
+image now pins torch 2.14.1, torchvision 0.29.2, kornia 0.9.2, opencv-python
+5.1.0.95, matplotlib 3.11.2, pycolmap 4.2.1 and LightGlue commit `5a650c44…`,
+with ALIKED/LightGlue checkpoints baked under `/opt/neural_models` and
+checksum-verified. Verification: scene suite **117 passed + 2 skipped** (119
+collected), actual-binary interoperability **1 passed**, backend **541 passed**, image-quality
+**47 passed**, `pip check` clean, Ruff clean for changed code; a live GPU scene
+task completed (11/11, 34/34 verified pairs, no fallback) and a no-GPU fallback
+drill rebuilt SIFT and completed. The five-variant Sceaux benchmark kept SIFT as
+the default (no demonstrated quality improvement from neural matching on that
+scene). One pre-existing clock-initialisation defect was found and fixed during
+final verification (direct stage calls could falsely trip the task budget after
+~4 h of host uptime). Full evidence: [`reviews/increment12_closeout.md`](reviews/increment12_closeout.md).
+
+**Post-MVP increment: advisory image-quality analysis (2026-11-24).** `ml/image_quality/` now implements [`additions/11_image_quality_analysis.md`](additions/11_image_quality_analysis.md) as a shared, deterministic analyzer built only on the already-pinned NumPy/Pillow (no dependency added, no Python OpenCV). Scene reconstruction runs it inside the existing `IMAGE_PREPARATION` stage after dataset preparation and before COLMAP, attaches the report to `ReconstructionDiagnostics`, writes `diagnostics/image_quality.json`, and reports pHash/SSIM near-duplicate candidates without removing or rejecting any photograph. Object generation analyzes the decoded original before TripoSR preprocessing and adds the report to `run.json` and the result metadata. Thresholds are provisional, validated and configurable through `IMAGE_QUALITY_*` (`.env.example`, Compose worker environments); advisory failures record `QUALITY_ANALYSIS_UNAVAILABLE`, only an explicitly required analysis raises `QUALITY_ANALYSIS_FAILED`, and no new public endpoint, frontend workflow or persisted stage was introduced. Verification: **47** image-quality tests, **82 passed + 1 skipped** scene ML cases, **39 passed + 1 skipped** object ML cases, **526 passed** backend cases, Ruff clean for the changed code (four untouched object test modules carry a pre-existing `I001`). Both worker images were rebuilt on 2026-11-25 and now import `/opt/image_quality`; a real OBJECT and a real SCENE task completed with `image_quality.status = "OK"`, and the opt-in real TripoSR and COLMAP/OpenMVS checks passed. Full details, the corrected scene-test count and the live evidence are in Sections 13.5–13.7 of the addendum.
+
+**Post-MVP increment: neural scene reconstruction (2026-11-27).** [`additions/15_neural_scene_reconstruction.md`](additions/15_neural_scene_reconstruction.md) is implemented as an **optional** Gaussian-splat representation beside the released mesh path. `SCENE_REPRESENTATION` (`mesh` default, `gaussian_splat` opt-in) requires `SCENE_SPLAT_ENABLED=true` and `SCENE_OUTPUT_FORMAT=PLY`; the representation and method are persisted in `GenerationTask.parameters`, so retries/recovery are never re-targeted by a later setting change. Splat tasks route to `scene_gaussian_splat`; each scene worker registers one capability and rejects the other representation. The splat path runs the existing image preparation/feature/sparse/undistortion stages, then `SPLAT_DATASET_PREPARATION` → `SPLAT_TRAINING` → `SPLAT_EXPORT`; no OpenMVS or GLB stage runs. `ml/scene_reconstruction/` gained `colmap_model.py`, `nerfstudio_dataset.py` (upstream transforms.json/sparse PLY, resize-aware intrinsics and a reprojection self-check), `nerfstudio_runner.py`/`splat_train_entry.py` (pinned 1.1.5 Splatfacto in a controlled subprocess), `splat_exporter.py`/`splat_validator.py` (exact `ns-export` dialect, atomic publish, independent validation), `neural_pipeline.py` (VRAM admission, checkpoint manifest/reuse), `benchmark_splat.py`, `requirements-splat.txt` and `Dockerfile.splat` (verified scene base + isolated `/opt/splat-site`, baked LPIPS weights and compiled gsplat kernels). Backend: `ResultFormat.PLY` with migration `7c5d9a1b4e20`, representation-aware outbox payload/routing, `scene_methods.py`, extension/MIME-aware download, and a splat-capability worker bootstrap. Frontend: format dispatch, lazy `@mkkellogg/gaussian-splats-3d` renderer, splat statistics and disposal. Verified: backend **619**, scene ML **172 + 3 skipped** (175 collected), image-quality **47**, frontend **161**; real Splatfacto smoke (300 iters/800 px: 8 015 Gaussians, 1 989 312 B, PSNR 13.41/SSIM 0.643/LPIPS 0.739), live API task (3 000 iters/800 px: 208 582 Gaussians, 51 729 930 B, PSNR 14.37/SSIM 0.478/LPIPS 0.521), independent re-validation of the downloaded PLY, Edge viewer proof (SPLAT, 208 582, controls, `.ply` download) and a mesh-vs-splat benchmark. The production 30 000-iteration/1 600 px profile was **not** executed end-to-end; the canonical mesh-worker rebuild was replaced by a documented derived runtime image. Corrections found by this increment: the splat renderer needs `sharedMemoryForWorkers: false` without COOP/COEP; the documented frontend baseline was 148 tracked tests, not 173; `pytest -q` must not be passed twice. Full evidence and defects: [`reviews/increment15_closeout.md`](reviews/increment15_closeout.md).
 
 ---
 
@@ -183,9 +296,19 @@ Key ML files:
 | `ml/object_generation/exporter.py` | Vertex-colour-preserving GLB export |
 | `ml/object_generation/validator.py` | Independent GLB container/accessor/geometry/appearance validator |
 | `ml/object_generation/pipeline.py` | Production preprocessing → inference → export → validation orchestration with stage/heartbeat/cancel callbacks |
+| `ml/object_generation/generator_base.py` | Object-generator protocol, preprocessing capabilities and normalized result type (increment 13) |
+| `ml/object_generation/generator_factory.py` | Explicit generator allowlist, process-wide adapter cache and blocked-name errors (increment 13) |
+| `ml/object_generation/normalization.py` | Appearance-aware output normalization: vertex colours or UV/texture, rejects lossy output (increment 13) |
+| `ml/object_generation/sf3d/` | Stable Fast 3D adapter, manifest-verified loader, controlled weight initializer (increment 13) |
+| `ml/object_generation/requirements-sf3d.txt` | Isolated SF3D dependency set installed into `/opt/sf3d-site` (increment 13) |
+| `ml/object_generation/benchmarks/run_benchmark.py` | Reproducible generator benchmark with median/p95, VRAM, mesh and failure metrics (increment 13) |
+| `ml/object_generation/enhancement.py` | Object enhancement orchestration: cleanup, normals, simplification, UV/bake, PBR, fallback, memory budget and metadata (increment 14) |
+| `ml/object_generation/texture_baking.py` | xatlas unwrap, vectorised vertex-colour rasterisation, embedded PBR atlas, material normalisation (increment 14) |
+| `ml/object_generation/texture_generation.py` | AI texture backend protocol, lazy disabled backend and output validation (increment 14) |
+| `ml/object_generation/benchmarks/run_enhancement_benchmark.py` | Reproducible baseline/cleanup+bake benchmark with GLB validation facts (increment 14) |
 | `ml/object_generation/standalone.py` | Mandatory standalone inference/GLB proof CLI |
-| `ml/object_generation/exceptions.py` | Stable object-generation error codes |
-| `ml/object_generation/tests/` | 32 unit tests plus the opt-in real-model integration test and GLB fixtures |
+| `ml/object_generation/exceptions.py` | Stable object-generation and enhancement error codes |
+| `ml/object_generation/tests/` | 135 passed + 3 skipped cases plus the opt-in real-model integration test and GLB fixtures |
 | `ml/object_generation/testdata/` | Real photographs used by the proof and the real-model test |
 | `ml/object_generation/viewer/` | Three.js `GLTFLoader` + Khronos glTF Validator proof for the exported GLB |
 | `ml/scene_reconstruction/Dockerfile` | Dedicated scene worker image: COLMAP 4.2.1 (pinned official image), OpenMVS 2.4.0 built from source, OpenCV 4.12, CGAL 6.0.1, Eigen 3.4, VCGLib, Python venv, development test stage |
@@ -199,9 +322,19 @@ Key ML files:
 | `ml/scene_reconstruction/exporter.py` | OBJ/GLB repack into one self-contained GLB and raw-export diagnostics |
 | `ml/scene_reconstruction/validator.py` | Independent GLB parser extended for embedded images, UVs, materials and textures |
 | `ml/scene_reconstruction/pipeline.py` | `PhotogrammetryReconstructor`: ordered stages, checkpointing, diagnostics and result metadata |
+| `ml/scene_reconstruction/enhancement.py` | Conservative post-reconstruction scene processing; preserves graph/transforms/materials/textures (increment 14) |
+| `ml/scene_reconstruction/benchmark_enhancement.py` | Reproducible baseline/cleanup+normals/simplification-attempt scene benchmark (increment 14) |
 | `ml/scene_reconstruction/standalone.py` | Standalone proof and `--verify-tools` CLI |
-| `ml/scene_reconstruction/tests/` | 74 unit cases plus the opt-in real reconstruction test |
+| `ml/scene_reconstruction/tests/` | 172 passed + 3 skipped cases (175 collected) including the neural-representation coverage, plus the opt-in real Splatfacto test |
 | `ml/scene_reconstruction/README.md` | Image layout, pinned versions, pipeline, proof and license notes |
+| `ml/image_quality/` | Shared advisory image-quality analyzer (NumPy/Pillow): per-image technical findings, scene-only pHash/SSIM near-duplicate candidates, validated `IMAGE_QUALITY_*` configuration and 47 unit tests |
+| `ml/mesh_enhancement/` | Shared CPU metrics, conservative cleanup, area-weighted normals, guarded simplification and enhancement manifest (increment 14) |
+| `ml/scene_reconstruction/feature_matching.py` | Feature-backend contract, SIFT adapter, factory, deterministic pair generator and checkpoint manifest (increment 12) |
+| `ml/scene_reconstruction/feature_profiles.py` | Validated SIFT/ALIKED profiles, pinned model identifiers/checksums and backend/profile cross-checks |
+| `ml/scene_reconstruction/neural_features.py` | ALIKED-N16 + LightGlue adapter: lazy runtime, coordinate restoration, pycolmap import/verification, atomic database replacement, VRAM/OOM handling |
+| `ml/scene_reconstruction/download_neural_models.py` | Build-time download + SHA-256 verification of the baked ALIKED/LightGlue checkpoints |
+| `ml/scene_reconstruction/benchmark_features.py` | Reproducible five-variant feature-matching benchmark |
+| `ml/scene_reconstruction/requirements-neural.txt` | Scene-worker-only pinned neural dependency set |
 
 ---
 
@@ -231,7 +364,9 @@ Backend endpoints: `GET /health/live`, `GET /health/ready` (503 when PostgreSQL 
 
 The cleanup worker consumes jobs from Redis DB 1 (the broker) and processes them against PostgreSQL and the shared `app_data` volume; it never opens a port. Its beat scan still runs every `CLEANUP_POLL_INTERVAL_SECONDS` (default 15) as the recovery path, but project and image deletion now insert a `cleanup.requested` outbox event in the same transaction and the Outbox Dispatcher publishes it to the `file_cleanup` queue for immediate targeted processing. The same worker also runs the hourly scene-workspace retention sweep (`cleanup_scene_workspaces_task`, `SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS`), which queues terminal workspaces older than `SCENE_WORKSPACE_RETENTION_HOURS` (default 168; `0` disables pruning) as `DIRECTORY` cleanup jobs and logs `workspace_usage`. Structured JSON logs include `project_id`, `cleanup_job_id` and `operation`.
 
-The object worker is a real TripoSR environment: it loads the pinned model once at startup, verifies the cached weights, registers the object pipeline through `register_pipeline`, and executes preprocessing, inference, mesh extraction, GLB export, validation and result persistence. The scene worker is now a real COLMAP/OpenMVS environment: it verifies COLMAP 4.2.1 and OpenMVS 2.4.0 at startup, registers `run_colmap_pipeline`, executes the documented reconstruction sequence in a task-scoped workspace and persists the repacked, validated GLB through `complete_with_result`. The Outbox Dispatcher and Task Recovery run as independent processes; neither serves HTTP.
+The object worker is a real single-image generator environment: by default it loads the pinned TripoSR model once at startup, verifies the cached weights, registers `run_object_pipeline` through `register_pipeline`, and executes preprocessing, inference, normalization, optional mesh/texture enhancement (cleanup + normals by default; baking opt-in) and GLB export/validation. With `compose.sf3d.yaml` the same service runs the opt-in Stable Fast 3D target instead: it verifies the SF3D manifest/checksums, loads the pinned model, and writes a textured GLB; the queue, task type and result contract are unchanged. The scene worker is now a real COLMAP/OpenMVS environment: it verifies COLMAP 4.2.1 and OpenMVS 2.4.0 at startup, registers `run_colmap_pipeline`, executes the documented reconstruction sequence in a task-scoped workspace, and persists the repacked, validated GLB through `complete_with_result`; optional post-processing is off by default and preserves OpenMVS textures. The Outbox Dispatcher and Task Recovery run as independent processes; neither serves HTTP.
+
+**Opt-in SF3D overlay (increment 13).** `compose.sf3d.yaml` layers on the development stack and rebuilds the single `object-worker` from the `sf3d` Dockerfile target (`mogen-object-worker:sf3d`), sets `OBJECT_GENERATOR=sf3d` and adds a one-shot `sf3d-model-init` service. The default `compose.yaml` stack is untouched and keeps TripoSR. The SF3D source lives at `/opt/sf3d-src` (not `/opt/sf3d`: the upstream checkout has no `sf3d/__init__.py`, so a directory named `sf3d` is shadowed by the ComfyUI root `__init__.py` through `/opt` on `PYTHONPATH`), its extra dependencies live in `/opt/sf3d-site`, and its weights live in `/models/sf3d` inside the existing model-cache volume.
 
 The v1 API prefix is `/api/v1`. Authentication is implemented under `/api/v1/auth/*`:
 
@@ -293,6 +428,19 @@ A failed regeneration leaves the previous current result and its file in place; 
 
 ## 5. Verified baseline: confirm it before changing anything
 
+> **Increment-14 note (2026-11-26):** the commands below are the Phase 7
+> baseline; the current counts are object ML **135 passed + 3 skipped** (138
+> collected), scene ML **136 passed + 2 skipped** (138 collected), image-quality
+> **47 passed**, backend **573 passed**, frontend **173 passed**, actual-binary
+> feature interoperability **1 passed**, real TripoSR **1 passed**, `pip check`
+> clean. The scene suite collects **119** cases before increment 14 and the
+> increment-12/13 docs' "119 passed + 2 skipped" over-counted by two; the correct
+> pre-increment baseline was **117 passed + 2 skipped**. The object/scene suites
+> must be run in their worker images (or a host mount with
+> `PYTHONPATH=/work/ml:/opt/triposr:/opt`). Enhancement is covered by
+> `ml/mesh_enhancement/` tests through both worker suites and by the benchmark
+> scripts; see [`reviews/increment14_closeout.md`](reviews/increment14_closeout.md).
+
 ```bash
 # Phase 7 stack (GPU). The base compose.yaml is CPU-capable; this override
 # reserves the GPU for the object worker and enables COLMAP's CUDA features in
@@ -310,21 +458,38 @@ curl http://127.0.0.1:8000/health/dependencies
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5173/
 curl -s http://127.0.0.1:5173/api/v1/probe   # JSON 404 from uvicorn proves the proxy
 docker compose exec cleanup-worker sh -c 'celery -A app.tasks.celery_app:celery_app inspect registered -d celery@$HOSTNAME --timeout 5'  # includes cleanup_sessions_task
-docker compose run --rm --no-deps api pytest        # 525 passed (339 are database/API integration tests)
-docker compose run --rm --no-deps api pytest --cov=app --cov-report=term-missing # 87.8% lines
+docker compose run --rm --no-deps api pytest        # 619 passed
+docker compose run --rm --no-deps api pytest --cov=app --cov-report=term-missing # coverage recorded in Phase 9; neural paths are worker-only
 docker compose run --rm --no-deps api ruff check .  # clean
-docker compose run --rm --no-deps api ruff format --check . # 117 files formatted
+docker compose run --rm --no-deps api ruff format --check . # clean
 docker compose run --rm --no-deps api alembic check # no schema drift
 docker compose run --rm --no-deps api pip check     # no broken requirements
-docker run --rm mogen-object-worker:dev python -m pytest /opt/object_generation/tests -q # 35 passed, 1 skipped
-docker run --rm mogen-scene-worker:dev python -m pytest /opt/scene_reconstruction/tests -q # 75 passed, 1 skipped
+docker run --rm mogen-object-worker:dev python -m pytest /opt/object_generation/tests # 135 passed, 3 skipped
+docker run --rm mogen-splat-worker:dev /opt/venv/bin/python -m pytest /opt/scene_reconstruction/tests # 172 passed, 3 skipped
+docker run --rm mogen-splat-worker:dev /opt/venv/bin/python -m pytest /opt/image_quality/tests # 47 passed
 docker run --rm mogen-scene-worker:dev python -m scene_reconstruction.standalone --verify-tools # COLMAP 4.2.1 + OpenMVS 2.4.0
 docker run --rm mogen-frontend:dev npm run lint       # clean
 docker run --rm mogen-frontend:dev npm run typecheck  # clean
-docker run --rm mogen-frontend:dev npm run format:check # clean
-docker run --rm mogen-frontend:dev npm run test:run   # 148 passed
-docker run --rm mogen-frontend:dev npm run test:coverage # 71.5% lines
+docker run --rm mogen-frontend:dev npm run format:check # pre-existing CRLF files only; changed files individually clean
+docker run --rm mogen-frontend:dev npm run test:run   # 161 passed
+docker run --rm mogen-frontend:dev npm run test:coverage # recorded in Phase 9
 docker run --rm mogen-frontend:dev npm run build      # succeeds
+```
+
+The enhancement benchmark commands are:
+
+```powershell
+docker run --rm -v "${PWD}/ml:/work/ml:ro" -v "${PWD}/.proof:/proof" `
+  -e PYTHONPATH=/work/ml:/opt/triposr:/opt -w /work/ml/object_generation `
+  mogen-object-worker:dev python -m object_generation.benchmarks.run_enhancement_benchmark `
+  --object /proof/increment13/live/triposr-gpu-20261125-214838/model.glb `
+  --repetitions 3 --texture-resolution 512 `
+  --output /proof/increment14/benchmark/enhancement-object.json
+docker run --rm -v "${PWD}/ml:/work/ml:ro" -v "${PWD}/.proof:/proof" `
+  -e PYTHONPATH=/work/ml:/opt -w /work/ml/scene_reconstruction `
+  mogen-scene-worker:dev /opt/venv/bin/python -m scene_reconstruction.benchmark_enhancement `
+  --scene /proof/scene-check-iq.glb --repetitions 2 `
+  --output /proof/increment14/benchmark/enhancement-scene.json
 ```
 
 The production release was verified separately on 2026-11-11; the reproducible
@@ -400,7 +565,9 @@ docker run --rm -v "${PWD}/backend:/app" -w /app mogen-api:dev ruff format .
 
 **The PowerShell tool here is Windows PowerShell 5.1, not pwsh 7.** `-SkipHttpErrorCheck` and `[Microsoft.PowerShell.Commands.WebRequestSession]` do not exist, and `Invoke-WebRequest` fails in non-interactive mode. Drive HTTP smoke tests with `curl.exe`: write JSON bodies to temp files with `Set-Content`, use `-c`/`-b` for the cookie jar, and `-F "file=@..."` for multipart. Parenthesise a path before calling `-replace` on it (`(Join-Path $tmp 'x.json') -replace '\\','/'`), because PowerShell binds `-replace` to `Join-Path` otherwise.
 
-**pytest's final summary line can vanish through a pipe.** When the pass count matters, redirect the whole run to a file (`... > "$env:TEMP\run.log" 2>&1`) and read the tail; `Tee-Object` or `Select-Object -Last N` sometimes drops the final "N passed" line. Exit code 0 plus the file is the reliable evidence.
+**pytest's final summary line can vanish through a pipe.** When the pass count matters, redirect the whole run to a file (`... > "$env:TEMP\run.log" 2>&1`) and read the tail; `Tee-Object` or `Select-Object -Last N` sometimes drops the final "N passed" line. Exit code 0 plus the file is the reliable evidence. Also **never pass `-q` twice**: both `pyproject.toml` files already set it, so `pytest -q` is `-qq` and suppresses the summary entirely.
+
+**Neural (splat) image traps (increment 15).** The gsplat JIT build needs a host compiler and Python headers (`build-essential`, `python3.12-dev`), CUDA 13 CCCL (`nvidia-cuda-cccl`, for `nv/target`), and a *consistent* CUDA 13.0 toolchain (`nvidia-cuda-nvcc`, `-crt`, `-nvvm` all 13.0.88; 13.5 components emit PTX 9.5 that ptxas 13.0 rejects). It also needs an unversioned `libcudart.so` symlink in `$CUDA_HOME/lib`, `nvcc` on `PATH` (gsplat probes `nvcc` by name) and `MAX_JOBS` bounded on a shared host. Real training additionally needs `scikit-learn`, `lpips` with cached AlexNet weights (`TORCH_HOME`) and `open3d` for sparse-point loading. Splatfacto checkpoints use `_model.gauss_params.*` keys and need narrow NumPy safe-globals for `torch.load(weights_only=True)`; quaternions are unnormalized. The frontend renderer needs `sharedMemoryForWorkers: false` unless the app sends COOP/COEP headers. Finally, **rebuilding an image does not update running containers**: recreate every changed service (`up -d --force-recreate`) or the dispatcher/workers keep executing the old code and route a splat task to the mesh pipeline.
 
 **Never rewrite this handoff with PowerShell text cmdlets.** `Get-Content -Raw | Set-Content` decodes UTF-8 as the system ANSI code page (CP1251 on this host) and double-encodes em dashes, arrows and ellipses into mojibake such as `вЂ”`. Use the edit/write tools, which are UTF-8 clean. If mojibake appears, repair it with the CP1251→UTF-8 round trip and re-check the non-ASCII character set.
 
@@ -435,6 +602,52 @@ docker run --rm -v "${PWD}/backend:/app" -w /app mogen-api:dev ruff format .
 **Model cache and offline mode.** `triposr_model_cache` is mounted at `/models`; `model-init` is the only service allowed to download. The worker runs with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, so a missing DINO config or a bad cache ref turns into `MODEL_LOAD_FAILED`, not a silent download. `huggingface_hub` reads `models--facebook--dino-vitb16/refs/main` verbatim; it must contain the 40-character revision with **no trailing newline**. The initial initializer wrote a newline and broke offline model loading; this is fixed in `download_models.py`.
 
 **Object-worker import path.** The pipeline package is `/opt/object_generation`, so the image and Compose set `PYTHONPATH=/app:/opt/triposr:/opt` (the parent `/opt`, not the package directory). The first image build used the package directory and `import object_generation` failed; use the parent path.
+
+**The ML worker images must be rebuilt for increment 11.** Both Dockerfiles now copy `ml/image_quality` to `/opt/image_quality`. A mount-only check (`-v "${PWD}/ml:/work/ml"`) proves the code but not the image; `docker compose build object-worker scene-worker` is required before `up`, otherwise `object_generation.config` and `scene_reconstruction.config` fail to import the shared analyzer at worker startup. The object worker also reloads the 1.7 GB model after the rebuild (4–5 minutes).
+
+**The scene image now carries a CUDA 13 neural stack (increment 12).** `torch==2.14.1` from PyPI resolves to the CUDA 13 wheels (`+cu130`, torchvision `+cu132`) and pulls roughly 3.5 GB of NVIDIA libraries; the final image is ~20.7 GB (image ID `sha256:9302854844a9…`) and a neural-layer rebuild takes ~25–30 minutes (the COLMAP/OpenMVS layers stay cached). The driver here supports CUDA 13.4. `pip check` must stay clean: LightGlue declares `opencv-python` and `matplotlib`, so both are installed as pinned direct dependencies even though the adapter only needs `cv2` transitively. Do not install `opencv-python-headless` instead: it does not satisfy that metadata and `pip check` fails.
+
+**Neural checkpoints are baked, not downloaded at task time.** `download_neural_models.py` populates `/opt/neural_models/hub/checkpoints` during the build and verifies both SHA-256 values; `neural_features.verify_model_files()` re-verifies before every neural stage. `TORCH_HOME=/opt/neural_models` is set in the image. If the worker reports `NEURAL_MODEL_UNAVAILABLE`, the image predates the bake or a checksum changed; rebuild rather than letting torch.hub download.
+
+**pycolmap 4.2.1 is deliberately the exact COLMAP version.** The adapter imports images and keypoints through `pycolmap.Database`/`import_images`, writes matches, and calls `pycolmap.verify_matches`; the pinned `colmap mapper` then consumes the database. Do not hand-write SQLite tables and do not upgrade pycolmap independently of the COLMAP base image. The interoperability test (`tests/test_feature_interop.py`, `RUN_FEATURE_INTEROP_TEST=1`) is the guard; a mocked database is not acceptable evidence.
+
+**Do not run the neural suite or interop test in a GPU-less container unless the test explicitly targets CPU.** The code supports `auto` → CPU, but SIFT fallback on a CPU-only host needs `SCENE_COLMAP_USE_GPU=false` (otherwise COLMAP's GPU extractor fails). An 8-thread CPU SIFT extraction at 8 192 features was OOM-killed on this host during a drill; the worker's configured `SCENE_MAX_THREADS=4` fits.
+
+**The pipeline clock is initialised in `__init__` (fixed 2026-11-25).** Stage methods are callable directly by tests; with `_started=0.0` a call after ~4 h of host uptime falsely raised `TOOL_TIMEOUT`. `reconstruct()` still resets the clock. Do not reintroduce a zero default.
+
+**A neural workspace can be large.** `features.npz` holds keypoints/descriptors for all images (roughly 1 MB per image at 2 048 keypoints), and the database plus sparse/dense stages follow. Successful tasks delete their workspace; failed ones keep it for diagnostics/retention as before.
+
+**The SF3D source must not live in a directory named `sf3d`.** The upstream checkout has no `sf3d/__init__.py`, so `/opt/sf3d/sf3d` is only a namespace package; the ComfyUI root `__init__.py` at `/opt/sf3d/__init__.py` is a regular package and wins when `/opt` is on `PYTHONPATH` (`import sf3d` then tries `comfy.model_management`). The image keeps the source at `/opt/sf3d-src` and puts that on `PYTHONPATH`. Do not "fix" this by deleting the root `__init__.py` at build time unless the pin changes; the current layout is intentional and covered by the build preflight.
+
+**SF3D weights are gated; access was granted on 2026-11-26.** Anonymous requests return 401 and the cached OAuth token used in the first attempt returned 403. A **classic read token** created on the account that accepted the Stability AI Community License returns 200 for `config.yaml` and `model.safetensors`; it is stored as `HF_TOKEN` in the gitignored `.env` and is consumed only by the opt-in `sf3d-model-init` service. Never bypass the gate with a mirror, and never log the token. The initializer also seeds `facebook/dinov2-large` and open_clip `ViT-B-32`/`laion2b_s34b_b79k`, because the offline worker instantiates both at model start; without them the first task fails with `LocalEntryNotFoundError`.
+
+**This host runs the development stack with the GPU overlay implicit (2026-11-26).** The gitignored `.env` sets `COMPOSE_FILE=compose.yaml;compose.gpu.yaml`, so a plain `docker compose ps|up|run` already includes the NVIDIA device reservation, `OBJECT_DEVICE=cuda:0`, `OBJECT_ALLOW_CPU_FALLBACK=false` and `SCENE_COLMAP_USE_GPU=true`; `docker compose config` shows them without `-f` flags. The base `compose.yaml` stays CPU-capable for other hosts — remove that line (or pass an explicit `-f` list without the overlay) for a CPU-only run. `TEXTURE_ENHANCEMENT_DEVICE` remains `cpu` deliberately: this build rejects any other value, so mesh cleanup, UV unwrap and baking are not GPU stages. Torch installed on the Windows host (3.15, cu134) is not used by the project; all ML runs inside the pinned CUDA images, and host-native ML execution is unsupported.
+
+**`pytest` can shadow the upstream `sf3d` package with MOGEN's own subpackage (fixed 2026-11-26).** The object-generation module is itself named `sf3d`, and `pytest` inserts its directory on `sys.path` (the module's `pythonpath = ["."]` setting), so a plain `import sf3d` resolved `object_generation/sf3d` and failed with a relative-import error. Upstream is a namespace package, so path order alone cannot win. `loader.import_sf3d_system()` registers `/opt/sf3d-src/sf3d` under `sf3d` explicitly (dropping only MOGEN's shadowing module) before importing `SF3D`; `SF3D_SOURCE_ROOT` overrides the path. Real-model tests and the worker both go through it.
+
+**The SF3D dependency set is isolated on purpose.** `requirements-sf3d.txt` is installed with `--no-deps --target /opt/sf3d-site`; it deliberately does not apply upstream's `numpy 1.26.4` / `transformers 4.42.3` / `trimesh 4.4.1` pins, which conflict with the torch 2.14.1 / numpy 2.3.5 runtime. `gpytoolbox` is pinned to `0.3.8` because upstream `0.2.0` has no CPython 3.12 wheel; only the optional remesh paths call its API. Do not install these into the TripoSR site-packages.
+
+**The SF3D image build needs the PyTorch devel base.** Both native extensions (`texture_baker`, `uv_unwrapper`) compile in the `sf3d-native-build` stage on `pytorch/pytorch:2.14.1-cuda12.6-cudnn9-devel`; the first build pulls ~10 GB and the host download was slow (20–35 min) and re-pulled after a cache prune. Do not prune the builder cache immediately before an SF3D rebuild. `TORCH_CUDA_ARCH_LIST=8.6` and `USE_NATIVE_ARCH=0` keep the wheels portable and bounded, and **`USE_CUDA=1` is mandatory** (fixed 2026-11-26): upstream `setup.py` defaults `USE_CUDA` to `torch.cuda.is_available()`, which is False in the GPU-less builder, so without it the wheel registers only the CPU kernels and every textured task fails with `rasterize` unavailable for CUDA. The final image imports `SF3D`, `TextureBaker` and `Unwrapper` as a build preflight; that preflight does not prove the CUDA dispatch table, so check `torch._C._dispatch_dump("texture_baker_cpp::rasterize")` for a `CUDA:` row after a rebuild.
+
+**Textured GLB validation is an increment-13 extension, not a relaxation of OBJ-AC-10.** TripoSR assets still must carry `COLOR_0`; the validator additionally accepts a textured PBR material only when `TEXCOORD_0` and an embedded `baseColorTexture` image (bufferView, no `uri`) are present. A GLB with neither still fails with `GLB_VALIDATION_FAILED`. The exporter keeps the TripoSR vertex-colour normalization unchanged; the textured path never flattens to vertex colours.
+
+**The enhancement memory budget must exceed the resident model.** The increment-14 soft budget was initially 4 096 MB; the first live object task correctly skipped enhancement because the worker process peak RSS (model + backend + mesh) was ~4.4 GB. `MESH_ENHANCEMENT_MAX_MEMORY_MB` now defaults to **8 192** for both workers. Do not lower it to a value near the Python/model baseline, and remember the metric is process peak RSS, not per-operation allocation.
+
+**xatlas unwrap dominates optional texture baking.** On the retained 76 313-face TripoSR mesh, a 512 px bake took ~38 s: xatlas was ~39 s and the vectorised colour rasteriser <1 s. A per-face Python rasteriser or a 76k-call Pillow polygon pass was much slower and was replaced. Baking is off by default; do not enable it by default without budget/quality evidence.
+
+**The canonical image rebuild can be slow or blocked.** The object Dockerfile needs the ~6.4 GB PyTorch devel layer for `torchmcubes`/SF3D native wheels; this host pulled it at <0.3 MB/s. The scene Dockerfile recompiles OpenCV/OpenMVS when its build cache is absent. During increment-14 verification the runtime code was proven in derived images (`FROM mogen-object-worker:dev` / `FROM mogen-scene-worker:dev` plus the changed source), and the canonical Dockerfile changes were only Compose-validated. Do not present a derived image as a completed canonical build; rerun the canonical build when the layer pull/cache is practical.
+
+**Scene normals must not use trimesh's lazy SciPy fallback.** The scene image has no SciPy, so `mesh.vertex_normals` falls back to a dense O(vertices × faces) computation (tens of seconds on a 16k-vertex scene). `ml/mesh_enhancement/normals.py` computes area-weighted normals in NumPy and stores them in the trimesh cache; `measure_mesh` only reads an existing cache. Keep this path for scene post-processing. Scene post-processing is off by default and never unwraps/rebakes OpenMVS textures.
+
+**`.env` files must stay BOM-free and CRLF-consistent.** Editing them with Windows PowerShell `Set-Content -Encoding utf8` adds a BOM and can mix line endings; this happened during increment 14 and was repaired. Use the edit/write tools or .NET `UTF8Encoding($false)` when a script must rewrite them.
+
+**One GPU-heavy model at a time, including benchmarks.** The running object worker holds its model in VRAM (~5.6 GB) while host desktop applications hold another 5–7 GB. A second TripoSR run (the benchmark) produced transient CUDA allocator OOM warnings during warm-up; stop `object-worker` (`docker compose stop object-worker`) before a benchmark or an SF3D drill, and restart it afterwards. The benchmark's measured runs succeeded; warm-up runs are excluded from its statistics.
+
+**The benchmark counts only measured runs.** `benchmarks/run_benchmark.py` runs one warm-up per image and excludes it from the success/latency aggregates; a generator that is disabled, blocked or missing weights is recorded as a variant with its error code, never as a fabricated success. Its `--generators` list is explicit.
+
+**Ruff on a read-only mount needs `--no-cache`.** `ruff check`/`ruff format` create `.ruff_cache` under the working directory and fail with "Read-only file system" when the source tree is mounted `:ro`. Add `--no-cache` (and `--no-cache` to `format --check`) or mount writable. The worker image's Ruff also reports four pre-existing `I001` issues in untouched `ml/object_generation/tests/*.py`; they are not caused by increment 11.
+
+**The pytest summary line can vanish through a pipe.** Use `--collect-only -q` and sum the per-file counts, or redirect to a file and inspect the exit code, when the exact pass count matters. This was already true for the Phase 10 suite and still applies.
 
 **The object-worker image is large and slow to build.** It carries CUDA PyTorch and compiles `torchmcubes` for SM 86; the first build can take 45–60 minutes and needs a lot of disk. Subsequent builds reuse layers. The worker loads the model at startup (about 4–5 minutes in the container), so its healthcheck has a 600 s start period. Do not lower it without measuring.
 
@@ -593,6 +806,11 @@ Do not re-litigate these without a reason.
 | The API never imports Celery or a Redis client: generation writes PostgreSQL only, so it accepts requests during a Redis outage and the dispatcher delivers later | `backend/app/api/v1/endpoints/generation.py`, `backend/app/services/generation_service.py`, INF-AC-23/24 |
 | The status endpoint reports only persisted data; `progress_percent` stays null and `stage` is never a terminal status, and `result_available` follows the current result independently of the latest task | `backend/app/api/v1/endpoints/generation.py`, `api_contracts.md` 9.3–9.4 |
 | The object and scene workers each have a dedicated image (`mogen-object-worker:dev`, `mogen-scene-worker:dev`); the cleanup worker reuses `mogen-api:dev` because it has no ML dependencies | `compose.yaml`, `08_infrastructure.md` 3.5–3.6 |
+| COLMAP SIFT remains the default scene feature backend; ALIKED + LightGlue is opt-in through validated worker settings, never through the API or a per-project choice | `ml/scene_reconstruction/feature_matching.py`, `backend/app/core/config.py`, `12_advanced_feature_matching.md` Section 7 |
+| The neural adapter uses pycolmap 4.2.1's public database/import/verification API directly instead of adding the HLoc package; the actual-binary interoperability test is mandatory | `ml/scene_reconstruction/neural_features.py`, `tests/test_feature_interop.py` |
+| Feature checkpoints are valid only when `feature_manifest.json` matches image hashes, backend/profile, models, parameters, pairing, resize, verification and runtime versions; a change invalidates extraction, matching and dependent outputs | `ml/scene_reconstruction/feature_matching.py`, `pipeline.py` |
+| Neural failures fall back to a clean SIFT rebuild only when configured and recoverable; fallback reason and actual backend are always visible in diagnostics | `ml/scene_reconstruction/pipeline.py`, `exceptions.py`, `diagnostics.py` |
+| Neural checkpoints are baked into the scene image under `TORCH_HOME` and checksum-verified; the worker never downloads models at task time | `download_neural_models.py`, `Dockerfile` |
 | The frontend UI is Russian, using the terminology in `02_ui_ux_specification.md` Section 11; dates and file sizes are formatted with `ru-RU` | `frontend/src/shared/lib/labels.ts`, `frontend/src/shared/lib/format.ts` |
 | The CSRF token lives only in memory, is fetched after session initialisation/login/registration, and is attached by the Axios request interceptor to non-safe methods; it is never stored in `localStorage` or `sessionStorage` | `frontend/src/shared/api/client.ts`, `frontend/src/app/providers/AuthProvider.tsx` |
 | API DTOs keep the backend snake_case shape; a mapping layer converts them to camelCase domain models before components see them | `frontend/src/shared/api/dto.ts`, `frontend/src/shared/api/mappers.ts` |
@@ -661,6 +879,11 @@ Do not re-litigate these without a reason.
 | Worker health beyond the process | Partially complete | Workers answer `celery inspect ping`; the dispatcher and recovery prove their loops with heartbeat files. Task-level metrics, dead-letter handling and per-task health remain deferred |
 | Session cleanup scheduling | Complete | Hourly `cleanup_sessions_task` deletes expired and revoked sessions; live run removed 4 expired + 9 revoked and left 28 active |
 | Redis licensing (RSALv2/SSPLv1) | Open | Needs legal acceptance or an approved broker change; see `phase0_decisions.md` Section 8 |
+| Increment 14 canonical image rebuild | Blocked/partial | Runtime verified in derived images; canonical object build needs the ~6.4 GB devel layer and the scene build recompiles OpenCV/OpenMVS. Dockerfile and Compose changes are in place and `config -q` passes |
+| Increment 14 quadric simplification | Known limitation | No simplifier is pinned; production records `SIMPLIFIER_UNAVAILABLE` and keeps the source. The guard is tested with an injected simplifier |
+| Increment 14 AI texture generation | Intentionally disabled | Protocol/factory/output validation implemented; no model passed the licence, compatibility, cache and 12 GB review. Enabling it fails settings validation |
+| Increment 14 scene UV/AI | Intentionally disabled | OpenMVS owns scene UV/atlas work; `SCENE_GENERATE_UV` and `SCENE_AI_TEXTURE_ENABLED` are rejected |
+| Increment 14 live baking task | Not executed | Baking is proven by unit/export/Khronos/Edge-viewer and benchmark evidence, not a second live task; the live object task used cleanup+normals |
 | Docker data root relocation | No longer required | The scene build fits on `C:`; the two ML images are large. Phase 8's rebuild re-downloaded shared CUDA layers, so keep an eye on free space before a cold rebuild |
 | First git commit | Partially resolved | The repository now has three commits; the Phase 9 and Phase 10 changes are unstaged/untracked. Do not stage or commit unless the user asks |
 | `ml/`, `infrastructure/`, `tests/` directories | Partially real | `ml/object_generation/` and `ml/scene_reconstruction/` are the real workers; `infrastructure/` now holds the backup image and certificate scripts; `ml/workers/` and `tests/` remain placeholders |
@@ -1024,11 +1247,11 @@ rate limiting, remote CI runners and further reconstruction quality tuning.
 
 ### 10.0. Resume in one minute
 
-The state below was verified at the end of Phase 10. **Continuation point:** Phases 2–10 are complete; the MVP is released as 1.0.0 and deployment-verified. No Phase 11 work has started. The development stack was returned to the running, healthy eleven-service state after the production verification. The working tree is uncommitted (Section 6) — do not reset, stage or commit it.
+The state below was verified at the end of increment 15 on 2026-11-27. **Continuation point:** Phases 2–10 are complete; the MVP is released as 1.0.0 and deployment-verified; post-MVP increments 11 (image quality), 12 (feature matching), 13 (advanced object generation), 14 (mesh/texture enhancement) and 15 (optional neural scene representation) are implemented. The development stack was returned to the running, healthy **mesh-default** state with the default TripoSR object worker and scene post-processing off; the splat worker is stopped/removed and `api` is back on `mesh`/`GLB`. The working tree is uncommitted (Section 6) — do not reset, stage or commit it.
 
 1. **Do not re-derive the project.** Read this handoff in full, then [`NEXT_SESSION.md`](NEXT_SESSION.md), [`AI_DEVELOPMENT_GUIDE.md`](AI_DEVELOPMENT_GUIDE.md), and the relevant specification / Section 11 of [`10_development_roadmap.md`](specifications/10_development_roadmap.md) before starting post-MVP work.
 2. **Check the sandbox policy** (Section 6): Docker needs `danger-full-access`; under `workspace-write` it fails with "Access is denied". If Docker Desktop is not running, start it first (the missing pipe is a stopped engine, not necessarily a denial). If approvals are enabled, retry the exact command with the narrowest wider mode; if they are disabled and Docker is genuinely blocked, report the baseline as **blocked**.
-3. **Confirm the baseline** (Section 5): `docker compose -f compose.yaml -f compose.gpu.yaml ps -a`, the three worker pings, the `cleanup_scene_workspaces_task` and `cleanup_sessions_task` registrations, the dispatcher/recovery heartbeat files, the object worker's `triposr_model_loaded`/`object_generation_pipeline_ready` logs and the scene worker's `scene_pipeline_ready` log, the backend suite (525 passed), the frontend suite (148 passed), the scene ML suite (75 passed, 1 skipped), the object ML suite (35 passed, 1 skipped), lint, format, `alembic check`, `pip check`, the API health endpoints and the frontend checks. Fix a failing baseline before any new work.
+3. **Confirm the baseline** (Section 5): `docker compose -f compose.yaml -f compose.gpu.yaml ps -a`, the three worker pings, the `cleanup_scene_workspaces_task` and `cleanup_sessions_task` registrations, the dispatcher/recovery heartbeat files, the object worker's `triposr_model_loaded`/`object_generation_pipeline_ready` logs and the scene worker's `scene_pipeline_ready` log, the backend suite (**619 passed**), the frontend suite (**161 passed / 25 files**), the scene ML suite (**172 passed, 3 skipped**; 175 collected), the object ML suite (**135 passed, 3 skipped**), image-quality (**47**), lint, format, `alembic check`, `pip check`, the API health endpoints and the frontend checks. Fix a failing baseline before any new work. Do not pass `-q` twice to pytest (the config already sets it; `-qq` hides the summary).
 4. **Do not re-open Phases 2–10.** The MVP is released; post-MVP work must start from Section 11 of the roadmap, with its own plan and acceptance criteria. Do not change the viewer, result/download contract, outbox, reconstruction pipelines or production packaging unless a new finding genuinely requires it.
 5. **Update the handoff and report** in the guide's format (Section 18.4) with the identifiers actually verified.
 
@@ -1036,17 +1259,22 @@ The state below was verified at the end of Phase 10. **Continuation point:** Pha
 
 If the stack is already running (it was left healthy), step 3 can start with `docker compose -f compose.yaml -f compose.gpu.yaml ps -a`; the URLs are `http://127.0.0.1:8000` (API), `http://127.0.0.1:5173` (frontend) and `http://127.0.0.1:8000/docs` (Swagger). If Docker is unavailable, report the baseline as **blocked** rather than guessing.
 
-**State left behind by Phase 10:** the development stack is running with rebuilt `mogen-api:dev` (1.0.0 code, `packaging` pin) and `mogen-frontend:dev`; `mogen-object-worker:dev` and `mogen-scene-worker:dev` are unchanged (the object runtime already had packaging 26.3). Nine services are healthy and `migration`/`model-init` are `Exited (0)`. Production images `:1.0.0` are built but not running. `.env.production`, `infrastructure/certs/tls.{crt,key}`, `.backups/` and `.env` exist locally and are gitignored; the `app` database role password was changed to the production secret, so `.env` is required for the development stack. `e2e/` and `.github/workflows/` are source files in the working tree (unstaged). `backend/tests/db/conftest.py` still routes test uploads to `/tmp/mogen-test-storage`; keep that isolation. The retained `/data/work/scene/379073b3-…` workspace becomes eligible for the retention sweep after ~2026-11-14 unless `SCENE_WORKSPACE_RETENTION_HOURS` is raised or set to `0`.
+**State left behind by increment 15:** the development stack is running with rebuilt `mogen-api:dev` (increment-15 code and migration applied), `mogen-frontend:dev` (splat renderer dependency), and a scene-worker image that contains the increment-15 source (derived from the verified runtime base because the canonical rebuild recompiles OpenCV/OpenMVS). Nine services are healthy and `migration`/`model-init` are `Exited (0)`; the object worker uses the default TripoSR policy and the scene worker has `SCENE_MESH_POSTPROCESS_ENABLED=false`, `SCENE_REPRESENTATION=mesh`. The dedicated splat worker (`mogen-splat-worker:dev`) is built (22.5 GB, shared layers with the scene image) but **stopped/removed**; recreate it with `compose.splat.yaml` when needed. The increment-15 live evidence project `e4287c69-7161-49e6-bc03-3ce807477f04` (user `splat-live-fdbd74d492@example.com`) is retained with its 51.7 MB PLY; `.proof/increment15/` holds the smoke/live/benchmark/viewer evidence (gitignored). Failed/cancelled test projects were deleted. The SF3D cache `/models/sf3d` (plus the DINOv2/CLIP HF caches under `/models/hf`) remains populated and manifest-verified, and `mogen-object-worker:sf3d-cuda` carries the CUDA-enabled texture baker. Production images `:1.0.0` are built but not running and do **not** include increment 15. `.env.production`, `infrastructure/certs/tls.{crt,key}`, `.backups/` and `.env` exist locally and are gitignored. `backend/tests/db/conftest.py` still routes test uploads to `/tmp/mogen-test-storage`. The retained `/data/work/scene/379073b3-…` workspace is beyond the default retention window; the sweep may prune it unless `SCENE_WORKSPACE_RETENTION_HOURS` is raised or set to `0`.
 
 ### 10.1. State snapshot
 
 | Item | Value |
 |---|---|
-| Phase / increment | Phases 2–10 complete; **MVP 1.0.0 released and deployment-verified; next work is post-MVP Section 11** |
+| Phase / increment | Phases 2–10 complete; **MVP 1.0.0 released and deployment-verified; increments 11–15 implemented; no increment 16 started** |
 | Stack | eleven Compose services; `db`, `redis`, `api`, `cleanup-worker`, `object-worker`, `scene-worker`, `outbox-dispatcher`, `task-recovery`, `frontend` healthy; `migration` and `model-init` Exited (0) |
-| Backend suite | **525 passed, 1 warning**: 339 database/API, 178 unit, 8 API-shell; 87.80% line coverage |
-| Frontend suite | **148 passed** across 24 files; 71.47% line coverage; lint, typecheck, format check and production build clean |
-| ML suites | Scene **75 passed, 1 skipped** (the skip is the opt-in real reconstruction); object **35 passed, 1 skipped** plus the opt-in real-model test passing separately |
+| Backend suite | **619 passed**: 573 increment-14 baseline + 46 increment-15 representation/routing/PLY cases |
+| Frontend suite | **161 passed across 25 files** (verifiable tracked baseline was **148 / 24**; the old 173/28 count included four untracked tests present only in a stale image); lint, typecheck and format check for changed files clean |
+| ML suites | Scene **172 passed, 3 skipped** (175 collected); object **135 passed, 3 skipped** (unchanged); image-quality **47 passed**; real Splatfacto **completed** (smoke + live task); real TripoSR **1 passed** (baseline); real SF3D **2 passed** (2026-11-26) |
+| Increment 11 | Advisory image-quality analysis; thresholds not retuned; both worker images rebuilt |
+| Increment 12 | Optional ALIKED + LightGlue feature matching; COLMAP SIFT default; pre-increment scene suite **117 passed + 2 skipped** (119 collected), interop 1 passed |
+| Increment 13 | Generator contract, TripoSR adapter, opt-in SF3D adapter/image/overlay, textured GLB path, generator metadata, fallback; Hunyuan3D blocked; real SF3D weight/inference/live-task/benchmark **completed 2026-11-26** (TripoSR 12/12 median 7.595 s vs SF3D 12/12 median 2.714 s) |
+| Increment 14 | Shared `mesh_enhancement`; conservative cleanup/normals; guarded simplification; xatlas UV/bake; PBR validation; disabled AI texture; scene post-process preserving OpenMVS textures; compact metadata; benchmarks; live object and scene tasks |
+| Increment 15 | Optional `GAUSSIAN_SPLAT` representation (Nerfstudio Splatfacto + gsplat, dedicated worker image/queue), `ResultFormat.PLY` migration, independent PLY validation, PLY download/API handling, lazy splat renderer; mesh remains default; real smoke/live/benchmark/browser evidence in [`reviews/increment15_closeout.md`](reviews/increment15_closeout.md) |
 | E2E | repository `e2e/` Playwright suite, **17/17 passed against the production HTTPS stack**; real object and real 11-image scene workflows |
 | Phase 2 close-out | Complete; report in [`reviews/phase2_closeout.md`](reviews/phase2_closeout.md) |
 | Phase 3 integration | Complete; auth, dashboard, creation, uploads and details verified; live smoke through the frontend proxy |
@@ -1064,16 +1292,16 @@ If the stack is already running (it was left healthy), step 3 can start with `do
 | Outbox dispatcher | Standalone process; claims committed events, publishes to the three queues, retries with backoff, releases expired locks; heartbeat file `/tmp/outbox-dispatcher.heartbeat` |
 | Task recovery | Standalone process; requeues/fails stale tasks and detects dispatch stalls; heartbeat file `/tmp/task-recovery.heartbeat` |
 | Cleanup worker | Celery 5.7.0 on queue `file_cleanup`, beat poll every 15 s as recovery, targeted `cleanup_storage_task(job_id)` from the dispatcher, hourly `cleanup_scene_workspaces_task` retention sweep and hourly `cleanup_sessions_task`, `celery inspect ping` healthy |
-| Configuration | `AUTH_RATE_LIMIT_ENABLED=true`, `AUTH_RATE_LIMIT_ATTEMPTS=10`, `AUTH_RATE_LIMIT_WINDOW_SECONDS=60`, `SESSION_CLEANUP_INTERVAL_SECONDS=3600`, `MAX_PAGE_SIZE=100`, `MAX_UPLOAD_SIZE_MB=20`, `MAX_IMAGE_DIMENSION=8192`, `MIN_SCENE_IMAGES=3`, `MAX_SCENE_IMAGES=100`, `CLEANUP_*`, `SCENE_WORKSPACE_RETENTION_HOURS=168`, `SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS=3600`, `OUTBOX_*`, `TASK_LEASE_SECONDS=300`, `TASK_HEARTBEAT_SECONDS=30`, `TASK_STALE_THRESHOLD_SECONDS=900`, `DISPATCH_STALL_TIMEOUT_SECONDS=900`, `TASK_RECOVERY_*`, `OBJECT_*`, `SCENE_RECONSTRUCTION_ENABLED=true`, `SCENE_COLMAP_EXECUTABLE=/usr/local/bin/colmap`, `SCENE_OPENMVS_BIN_DIR=/usr/local/bin/OpenMVS`, `SCENE_WORK_DIR=/data/work/scene`, `SCENE_MATCHING_STRATEGY=EXHAUSTIVE`, `SCENE_COLMAP_USE_GPU=false` (base; GPU override true), `SCENE_COLMAP_MAX_FEATURES=8192`, `SCENE_COLMAP_CAMERA_MODEL=SIMPLE_RADIAL`, `SCENE_MAX_IMAGE_SIZE=2000`, `SCENE_MAX_THREADS=4`, `SCENE_OPENMVS_USE_CUDA=false`, `SCENE_ENABLE_MESH_REFINEMENT=true`, `SCENE_ENABLE_TEXTURE_GENERATION=true`, `SCENE_MIN_REGISTERED_IMAGES=3`, `SCENE_MIN_REGISTRATION_RATIO=0.5`, `SCENE_MIN_SPARSE_POINTS=100`, `SCENE_MIN_DENSE_POINTS=100`, `SCENE_MAX_TASK_SECONDS=14400`, `SCENE_COLMAP_TIMEOUT_SECONDS=3600`, `SCENE_OPENMVS_TIMEOUT_SECONDS=5400`, `SCENE_EXPORT_TIMEOUT_SECONDS=1800`; frontend mirrors upload limits through `VITE_MAX_UPLOAD_SIZE_MB`, `VITE_MIN_SCENE_IMAGES`, `VITE_MAX_SCENE_IMAGES`, `VITE_TASK_POLL_INTERVAL` |
-| Storage | `/data` on the `app_data` volume, shared by the API, cleanup worker and object/scene workers; source keys like `projects/{project_id}/source/{image_id}.jpg`, object results at `projects/{project_id}/results/{task_id}/model.glb`, scene results at `.../scene.glb`; scene workspaces at `/data/work/scene/{task_id}` (pruned after the retention window); `triposr_model_cache:/models` holds the pinned weights/DINO/rembg cache |
+| Configuration | `AUTH_RATE_LIMIT_ENABLED=true`, `AUTH_RATE_LIMIT_ATTEMPTS=10`, `AUTH_RATE_LIMIT_WINDOW_SECONDS=60`, `SESSION_CLEANUP_INTERVAL_SECONDS=3600`, `MAX_PAGE_SIZE=100`, `MAX_UPLOAD_SIZE_MB=20`, `MAX_IMAGE_DIMENSION=8192`, `MIN_SCENE_IMAGES=3`, `MAX_SCENE_IMAGES=100`, `CLEANUP_*`, `SCENE_WORKSPACE_RETENTION_HOURS=168`, `SCENE_WORKSPACE_SWEEP_INTERVAL_SECONDS=3600`, `OUTBOX_*`, `TASK_LEASE_SECONDS=300`, `TASK_HEARTBEAT_SECONDS=30`, `TASK_STALE_THRESHOLD_SECONDS=900`, `DISPATCH_STALL_TIMEOUT_SECONDS=900`, `TASK_RECOVERY_*`, `OBJECT_*`, `SCENE_RECONSTRUCTION_ENABLED=true`, `SCENE_COLMAP_EXECUTABLE=/usr/local/bin/colmap`, `SCENE_OPENMVS_BIN_DIR=/usr/local/bin/OpenMVS`, `SCENE_WORK_DIR=/data/work/scene`, `SCENE_MATCHING_STRATEGY=EXHAUSTIVE`, `SCENE_COLMAP_USE_GPU=false` (base; GPU override true), `SCENE_COLMAP_MAX_FEATURES=8192`, `SCENE_COLMAP_CAMERA_MODEL=SIMPLE_RADIAL`, `SCENE_MAX_IMAGE_SIZE=2000`, `SCENE_MAX_THREADS=4`, `SCENE_OPENMVS_USE_CUDA=false`, `SCENE_ENABLE_MESH_REFINEMENT=true`, `SCENE_ENABLE_TEXTURE_GENERATION=true`, `SCENE_MIN_REGISTERED_IMAGES=3`, `SCENE_MIN_REGISTRATION_RATIO=0.5`, `SCENE_MIN_SPARSE_POINTS=100`, `SCENE_MIN_DENSE_POINTS=100`, `SCENE_MAX_TASK_SECONDS=14400`, `SCENE_COLMAP_TIMEOUT_SECONDS=3600`, `SCENE_OPENMVS_TIMEOUT_SECONDS=5400`, `SCENE_EXPORT_TIMEOUT_SECONDS=1800`; frontend mirrors upload limits through `VITE_MAX_UPLOAD_SIZE_MB`, `VITE_MIN_SCENE_IMAGES`, `VITE_MAX_SCENE_IMAGES`, `VITE_TASK_POLL_INTERVAL`; enhancement defaults `OBJECT_MESH_CLEANUP_ENABLED=true`, `OBJECT_MESH_NORMALS_ENABLED=true`, `OBJECT_MESH_MERGE_TOLERANCE=0.000001`, `OBJECT_MESH_SIMPLIFICATION_ENABLED=false`, `OBJECT_GENERATE_UV=false`, `OBJECT_BAKE_TEXTURE=false`, `OBJECT_UV_RESOLUTION=1024`, `OBJECT_TEXTURE_RESOLUTION=1024`, `OBJECT_AI_TEXTURE_ENABLED=false`, `SCENE_MESH_POSTPROCESS_ENABLED=false`, `SCENE_MESH_SIMPLIFICATION_ENABLED=false`, `SCENE_GENERATE_UV=false`, `SCENE_AI_TEXTURE_ENABLED=false`, `ENHANCEMENT_FALLBACK_TO_ORIGINAL=true`, `MESH_ENHANCEMENT_MAX_MEMORY_MB=8192`, `TEXTURE_ENHANCEMENT_DEVICE=cpu`; neural defaults `SCENE_REPRESENTATION=mesh`, `SCENE_SPLAT_ENABLED=false`, `SCENE_SPLAT_WORKER_QUEUE=scene_gaussian_splat`, `SCENE_SPLAT_MODEL=splatfacto`, `SCENE_SPLAT_MAX_ITERATIONS=30000`, `SCENE_SPLAT_IMAGE_SCALE=1.0`, `SCENE_SPLAT_MAX_IMAGE_DIMENSION=1600`, `SCENE_SPLAT_CHECKPOINT_INTERVAL=5000`, `SCENE_SPLAT_MAX_VRAM_MB=9000`, `SCENE_SPLAT_DEVICE=cuda`, `SCENE_SPLAT_MAX_ARTIFACT_BYTES=536870912`, `SCENE_SPLAT_TIMEOUT_SECONDS=7200`, `SCENE_SPLAT_MIN_REGISTERED_IMAGES=8`, `SCENE_SPLAT_SH_DEGREE=3`, `SCENE_SPLAT_PYTHON=/opt/venv/bin/python`, `SCENE_SPLAT_SITE_PACKAGES=/opt/splat-site`, `SCENE_SPLAT_WORKER=false` |
+| Storage | `/data` on the `app_data` volume, shared by the API, cleanup worker and object/scene workers; source keys like `projects/{project_id}/source/{image_id}.jpg`, object results at `projects/{project_id}/results/{task_id}/model.glb`, mesh scene results at `.../scene.glb`, splat scene results at `.../scene.ply`; scene workspaces at `/data/work/scene/{task_id}` (pruned after the retention window); `triposr_model_cache:/models` holds the pinned weights/DINO/rembg cache |
 | Database content | Phase 7–10 smoke/fixture rows are removed where they belonged to deleted projects; pre-existing development data, the user-created projects and the historical SCENE task `379073b3…` (soft-deleted project, retained workspace) remain; do not delete these. Phase 10 cleaned its E2E/deployment-check users and returned the counts to 2 users / 19 projects / 17 tasks / 10 results / 141 images. |
 | Cleanup jobs | Dispatched as `cleanup.requested`; executed by the worker (`PENDING` → `PROCESSING` → `COMPLETED`/`FAILED`), with `attempts` and `last_error`; superseded result files, expired scene workspaces and expired/revoked sessions are producers |
-| Git | branch `main`, three commits; Phase 9 and Phase 10 changes are unstaged/untracked |
-| Frontend | Russian UI, auth, dashboard, creation, uploads, details, generation/scene panel and unified 3D result viewer; 148 tests; lint/typecheck/format/build clean |
+| Git | branch `main`, three commits; Phases 9–10 and post-MVP increments 11–15 changes are unstaged/untracked |
+| Frontend | Russian UI, auth, dashboard, creation, uploads, details, generation/scene panel and unified 3D result viewer with GLB and lazy Gaussian-PLY dispatch; 161 tests; lint/typecheck/format (changed files) clean |
 
 ### 10.2. Copy-paste prompt
 
-> Working directory: `H:\Study\Univer\projects\mogen`. Read `docs/HANDOFF.md` first, then `docs/AI_DEVELOPMENT_GUIDE.md`, `docs/NEXT_SESSION.md`, `docs/reviews/phase10_closeout.md` and `docs/releases/v1.0.0.md`. Phases 2–10 are complete and the MVP is released as 1.0.0; do not redo them and do not re-open the viewer, result/download contract, outbox, reconstruction pipelines or production packaging unless a new finding genuinely requires it. Verify the Phase 10 baseline from Section 5 of the handoff (525 backend tests, 148 frontend tests, 75 scene ML + 1 skipped, 35 object ML + 1 skipped, nine healthy development services plus `migration` and `model-init` `Exited (0)`, three worker pings, the retention and session-cleanup tasks registered, fresh dispatcher/recovery heartbeat files, the real TripoSR model loaded, COLMAP 4.2.1 and OpenMVS 2.4.0 detected, and the production `:1.0.0` images present). Then choose a post-MVP item from Section 11 of `docs/specifications/10_development_roadmap.md`, write its plan and acceptance criteria, implement only that item, and follow the Definition of Done and report format from the guide. Do not implement multiple Section 11 items at once and do not change the released MVP behaviour without recording the finding. Update `docs/HANDOFF.md`, `docs/NEXT_SESSION.md` and add a close-out review for the work.
+> Working directory: `H:\Study\Univer\projects\mogen`. Read `docs/HANDOFF.md` first, then `docs/AI_DEVELOPMENT_GUIDE.md`, `docs/NEXT_SESSION.md`, `docs/reviews/increment15_closeout.md`, `docs/additions/15_implementation_plan.md` and `docs/additions/15_neural_scene_reconstruction.md`. Phases 2–10 are complete and the MVP is released as 1.0.0; post-MVP increments 11 (image quality), 12 (feature matching), 13 (advanced object generation), 14 (mesh/texture enhancement) and 15 (optional neural scene representation) are implemented. Increment 13's real SF3D evidence and increment 15's real Splatfacto evidence (smoke, live task, browser proof, benchmark) were completed; do not rerun them unless the pins or images change. Do not redo increments 11–15 and do not re-open the viewer GLB path, result/download contract, outbox semantics, mesh algorithms or released MVP behaviour. Verify the current baseline (619 backend tests, 161 frontend tests, 172 scene ML + 3 skipped, 135 object ML + 3 skipped, 47 image-quality tests, nine healthy development services plus `migration` and `model-init` `Exited (0)`, three worker pings, fresh dispatcher/recovery heartbeats, the real TripoSR model loaded, COLMAP 4.2.1 and OpenMVS 2.4.0 detected). The only identified follow-up is rebuilding the canonical mesh scene-worker image and measuring a full 30 000-iteration / 1 600 px splat artifact; do not start increment 16. Update `docs/HANDOFF.md`, `docs/NEXT_SESSION.md` and add a close-out review for any further work.
 
 ### 10.3. Session-start checklist
 
@@ -1089,18 +1317,19 @@ If the stack is already running (it was left healthy), step 3 can start with `do
    docker compose exec outbox-dispatcher cat /tmp/outbox-dispatcher.heartbeat
    docker compose exec task-recovery cat /tmp/task-recovery.heartbeat
    docker compose run --rm --no-deps api pytest > "$env:TEMP\pytest.log" 2>&1
-   Get-Content "$env:TEMP\pytest.log" -Tail 2        # 525 passed, 1 warning
+   Get-Content "$env:TEMP\pytest.log" -Tail 2        # 619 passed
    docker compose run --rm --no-deps api ruff check .
    docker compose run --rm --no-deps api ruff format --check .
    docker compose run --rm --no-deps api alembic check
    docker compose run --rm --no-deps api pip check
-   docker run --rm mogen-object-worker:dev python -m pytest /opt/object_generation/tests -q  # 35 passed, 1 skipped
-   docker run --rm mogen-scene-worker:dev python -m pytest /opt/scene_reconstruction/tests -q # 75 passed, 1 skipped
+   docker run --rm mogen-object-worker:dev python -m pytest /opt/object_generation/tests  # 135 passed, 3 skipped
+   docker run --rm mogen-splat-worker:dev /opt/venv/bin/python -m pytest /opt/scene_reconstruction/tests # 172 passed, 3 skipped
+   docker run --rm mogen-splat-worker:dev /opt/venv/bin/python -m pytest /opt/image_quality/tests # 47 passed
    docker run --rm mogen-scene-worker:dev python -m scene_reconstruction.standalone --verify-tools
    docker run --rm mogen-frontend:dev npm run lint
    docker run --rm mogen-frontend:dev npm run typecheck
-   docker run --rm mogen-frontend:dev npm run format:check
-   docker run --rm mogen-frontend:dev npm run test:run   # 148 passed
+   docker run --rm mogen-frontend:dev npm run format:check   # pre-existing CRLF files; changed files are clean
+   docker run --rm mogen-frontend:dev npm run test:run   # 161 passed
    docker run --rm mogen-frontend:dev npm run build
    ```
 

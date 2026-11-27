@@ -1,0 +1,122 @@
+# Opt-in neural scene representation (increment 15).
+#
+# Adds a dedicated Splatfacto worker on the `scene_gaussian_splat` queue and
+# switches the API to create Gaussian-splat scene tasks. The mesh worker, queues
+# and defaults in the base stack are untouched; run the base stack normally when
+# the mesh representation is required.
+#
+# Prerequisites:
+#   docker compose build scene-worker        # the neural image layers on it
+#   docker compose -f compose.yaml -f compose.gpu.yaml -f compose.splat.yaml up -d --build
+#
+# The selected representation is persisted per task, so disabling this overlay
+# later does not re-target tasks that were already accepted. `splatfacto-big`
+# is rejected by validation (12 GB target profile).
+
+x-splat-build: &splat-build
+  context: .
+  dockerfile: ml/scene_reconstruction/Dockerfile.splat
+
+x-splat-settings: &splat-settings
+  SCENE_REPRESENTATION: gaussian_splat
+  SCENE_SPLAT_ENABLED: "true"
+  SCENE_OUTPUT_FORMAT: PLY
+  SCENE_SPLAT_WORKER_QUEUE: ${SCENE_SPLAT_WORKER_QUEUE:-scene_gaussian_splat}
+  SCENE_SPLAT_MODEL: ${SCENE_SPLAT_MODEL:-splatfacto}
+  SCENE_SPLAT_MAX_ITERATIONS: ${SCENE_SPLAT_MAX_ITERATIONS:-30000}
+  SCENE_SPLAT_IMAGE_SCALE: ${SCENE_SPLAT_IMAGE_SCALE:-1.0}
+  SCENE_SPLAT_MAX_IMAGE_DIMENSION: ${SCENE_SPLAT_MAX_IMAGE_DIMENSION:-1600}
+  SCENE_SPLAT_CHECKPOINT_INTERVAL: ${SCENE_SPLAT_CHECKPOINT_INTERVAL:-5000}
+  SCENE_SPLAT_MAX_VRAM_MB: ${SCENE_SPLAT_MAX_VRAM_MB:-9000}
+  SCENE_SPLAT_DEVICE: ${SCENE_SPLAT_DEVICE:-cuda}
+  SCENE_SPLAT_MAX_ARTIFACT_BYTES: ${SCENE_SPLAT_MAX_ARTIFACT_BYTES:-536870912}
+  SCENE_SPLAT_TIMEOUT_SECONDS: ${SCENE_SPLAT_TIMEOUT_SECONDS:-7200}
+  SCENE_SPLAT_MIN_REGISTERED_IMAGES: ${SCENE_SPLAT_MIN_REGISTERED_IMAGES:-8}
+  SCENE_SPLAT_SH_DEGREE: ${SCENE_SPLAT_SH_DEGREE:-3}
+
+services:
+  api:
+    environment: *splat-settings
+
+  outbox-dispatcher:
+    environment:
+      SCENE_SPLAT_WORKER_QUEUE: ${SCENE_SPLAT_WORKER_QUEUE:-scene_gaussian_splat}
+
+  splat-worker:
+    build: *splat-build
+    image: mogen-splat-worker:dev
+    restart: unless-stopped
+    # One task at a time: a 12 GB card cannot hold two Splatfacto runs.
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - worker
+      - -Q
+      - scene_gaussian_splat
+      - --concurrency=1
+      - --prefetch-multiplier=1
+      - --include=app.tasks.scene_pipeline
+      - --loglevel=${LOG_LEVEL:-INFO}
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WORKER_SERVICE_NAME: splat-worker
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:change_me@db:5432/app}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_TASK_IGNORE_RESULT: ${CELERY_TASK_IGNORE_RESULT:-true}
+      STORAGE_ROOT: ${STORAGE_ROOT:-/data}
+      TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-300}
+      TASK_HEARTBEAT_SECONDS: ${TASK_HEARTBEAT_SECONDS:-30}
+      SCENE_TASK_TIME_LIMIT_SECONDS: ${SCENE_TASK_TIME_LIMIT_SECONDS:-7200}
+      SCENE_RECONSTRUCTION_ENABLED: ${SCENE_RECONSTRUCTION_ENABLED:-true}
+      SCENE_COLMAP_EXECUTABLE: ${SCENE_COLMAP_EXECUTABLE:-/usr/local/bin/colmap}
+      SCENE_OPENMVS_BIN_DIR: ${SCENE_OPENMVS_BIN_DIR:-/usr/local/bin/OpenMVS}
+      SCENE_WORK_DIR: ${SCENE_WORK_DIR:-/data/work/scene}
+      SCENE_COLMAP_USE_GPU: ${SCENE_COLMAP_USE_GPU:-true}
+      SCENE_MATCHING_STRATEGY: ${SCENE_MATCHING_STRATEGY:-EXHAUSTIVE}
+      SCENE_COLMAP_MAX_FEATURES: ${SCENE_COLMAP_MAX_FEATURES:-8192}
+      SCENE_COLMAP_CAMERA_MODEL: ${SCENE_COLMAP_CAMERA_MODEL:-SIMPLE_RADIAL}
+      SCENE_MAX_IMAGE_SIZE: ${SCENE_MAX_IMAGE_SIZE:-2000}
+      SCENE_MAX_THREADS: ${SCENE_MAX_THREADS:-4}
+      SCENE_MIN_REGISTERED_IMAGES: ${SCENE_MIN_REGISTERED_IMAGES:-3}
+      SCENE_MIN_REGISTRATION_RATIO: ${SCENE_MIN_REGISTRATION_RATIO:-0.5}
+      SCENE_MIN_SPARSE_POINTS: ${SCENE_MIN_SPARSE_POINTS:-100}
+      SCENE_MIN_DENSE_POINTS: ${SCENE_MIN_DENSE_POINTS:-100}
+      SCENE_MAX_TASK_SECONDS: ${SCENE_MAX_TASK_SECONDS:-14400}
+      SCENE_COLMAP_TIMEOUT_SECONDS: ${SCENE_COLMAP_TIMEOUT_SECONDS:-3600}
+      SCENE_OPENMVS_TIMEOUT_SECONDS: ${SCENE_OPENMVS_TIMEOUT_SECONDS:-5400}
+      SCENE_EXPORT_TIMEOUT_SECONDS: ${SCENE_EXPORT_TIMEOUT_SECONDS:-1800}
+      SCENE_FEATURE_BACKEND: ${SCENE_FEATURE_BACKEND:-COLMAP_SIFT}
+      SCENE_FEATURE_PROFILE: ${SCENE_FEATURE_PROFILE:-sift_default}
+      SCENE_FEATURE_FALLBACK_TO_SIFT: ${SCENE_FEATURE_FALLBACK_TO_SIFT:-true}
+      SCENE_FEATURE_MAX_KEYPOINTS: ${SCENE_FEATURE_MAX_KEYPOINTS:-2048}
+      SCENE_FEATURE_IMAGE_MAX_SIZE: ${SCENE_FEATURE_IMAGE_MAX_SIZE:-1600}
+      SCENE_FEATURE_PAIR_STRATEGY: ${SCENE_FEATURE_PAIR_STRATEGY:-EXHAUSTIVE}
+      SCENE_FEATURE_SEQUENTIAL_OVERLAP: ${SCENE_FEATURE_SEQUENTIAL_OVERLAP:-5}
+      SCENE_FEATURE_MIN_MATCHES: ${SCENE_FEATURE_MIN_MATCHES:-30}
+      SCENE_FEATURE_MATCH_THRESHOLD: ${SCENE_FEATURE_MATCH_THRESHOLD:-0.1}
+      SCENE_FEATURE_DEVICE: ${SCENE_FEATURE_DEVICE:-auto}
+      SCENE_FEATURE_MAX_VRAM_MB: ${SCENE_FEATURE_MAX_VRAM_MB:-9000}
+      SCENE_FEATURE_MAX_PAIRS: ${SCENE_FEATURE_MAX_PAIRS:-20000}
+      SCENE_SPLAT_WORKER: "true"
+      <<: *splat-settings
+    volumes:
+      - app_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - internal

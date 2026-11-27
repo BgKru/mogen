@@ -36,6 +36,7 @@ from app.repositories import (
     TaskRepository,
 )
 from app.services.outbox_events import create_generation_event
+from app.services.scene_methods import task_parameters_for
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +54,10 @@ STARTABLE_PROJECT_STATUSES = frozenset(
     }
 )
 
-# Logical generation settings stored in the task's JSONB snapshot
-# (05 Section 9.7). They are part of the request fingerprint.
-TASK_PARAMETERS: dict[TaskType, dict[str, str]] = {
-    TaskType.OBJECT: {"algorithm": "TripoSR", "output_format": "GLB"},
-    TaskType.SCENE: {"algorithm": "COLMAP_OPENMVS", "output_format": "GLB"},
-}
-
-
-def task_parameters_for(task_type: TaskType) -> dict[str, str]:
-    """Return a copy of the logical parameters for a task type."""
-    return dict(TASK_PARAMETERS[task_type])
+# The logical generation settings live in app.services.scene_methods so the
+# outbox dispatcher and worker routing read the same representation contract
+# (15 Section 4.2). ``task_parameters_for`` stays importable from this module
+# for existing callers.
 
 
 def compute_request_fingerprint(
@@ -191,7 +185,7 @@ class GenerationService:
 
         task_type = TaskType(project.type)
         images = list(self._images.list_for_project(project_id))
-        parameters = task_parameters_for(task_type)
+        parameters = task_parameters_for(task_type, self._settings)
         fingerprint = compute_request_fingerprint(
             project_id=project_id,
             task_type=task_type,

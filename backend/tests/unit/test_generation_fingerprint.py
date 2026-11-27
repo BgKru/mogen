@@ -46,9 +46,13 @@ def test_object_parameters_match_the_documented_snapshot() -> None:
 
 
 def test_scene_parameters_match_the_documented_snapshot() -> None:
+    # Increment 15: a scene task always carries its explicit representation and
+    # method, so routing and retries cannot disagree with a later settings change.
     assert task_parameters_for(TaskType.SCENE) == {
         "algorithm": "COLMAP_OPENMVS",
         "output_format": "GLB",
+        "representation": "MESH",
+        "method": "COLMAP_OPENMVS",
     }
 
 

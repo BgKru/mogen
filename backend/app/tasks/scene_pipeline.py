@@ -23,6 +23,13 @@ from app.core.config import get_settings
 from app.db.models.enums import TaskType
 from app.repositories import TaskRepository
 from app.services.result_service import result_storage_key
+from app.services.scene_methods import (
+    GAUSSIAN_SPLAT,
+    MESH,
+    SceneRepresentation,
+    persisted_representation,
+    task_matches_capability,
+)
 from app.tasks.generation_tasks import (
     GenerationCancelled,
     GenerationFailure,
@@ -35,7 +42,14 @@ logger = logging.getLogger(__name__)
 
 SOURCE_IMAGE_NOT_FOUND = "SOURCE_IMAGE_NOT_FOUND"
 EXTERNAL_TOOL_UNAVAILABLE = "EXTERNAL_TOOL_UNAVAILABLE"
+SPLAT_RUNTIME_UNAVAILABLE = "SPLAT_RUNTIME_UNAVAILABLE"
+SCENE_WORKER_INCOMPATIBLE = "SCENE_WORKER_INCOMPATIBLE"
 SCENE_RESULT_FILENAME = "scene.glb"
+SPLAT_RESULT_FILENAME = "scene.ply"
+
+
+def _task_representation(context: TaskContext) -> SceneRepresentation:
+    return persisted_representation(context.task.parameters)
 
 
 def _source_images(context: TaskContext) -> list:
@@ -71,8 +85,16 @@ def _source_images(context: TaskContext) -> list:
     return sources
 
 
-def run_colmap_pipeline(context: TaskContext) -> PipelineArtifact:
-    """Execute the real COLMAP/OpenMVS pipeline for one claimed task."""
+def _run_scene_pipeline(
+    context: TaskContext, *, capability: SceneRepresentation
+) -> PipelineArtifact:
+    """Execute the representation this worker owns, rejecting the other one.
+
+    The representation is read from the persisted task, never from the current
+    environment: a task queued as ``GAUSSIAN_SPLAT`` must never be executed by a
+    mesh worker (and vice versa), even if the deployment settings changed after
+    the task was created (15 Sections 4.2 and 7).
+    """
     from scene_reconstruction.config import build_config_from_settings
     from scene_reconstruction.exceptions import (
         SceneCancelled,
@@ -83,7 +105,14 @@ def run_colmap_pipeline(context: TaskContext) -> PipelineArtifact:
         PipelineCallbacks,
     )
 
-    config = build_config_from_settings(context.settings)
+    stored = _task_representation(context)
+    if not task_matches_capability(context.task.parameters, capability.value):
+        raise GenerationFailure(
+            SCENE_WORKER_INCOMPATIBLE,
+            "This worker cannot execute the representation persisted for the task.",
+        )
+
+    config = build_config_from_settings(context.settings, representation=stored.value)
     sources = _source_images(context)
     work_dir = Path(context.settings.scene_work_dir) / str(context.task.id)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +167,7 @@ def run_colmap_pipeline(context: TaskContext) -> PipelineArtifact:
         )
         raise
 
+    filename = SPLAT_RESULT_FILENAME if asset.format == "PLY" else SCENE_RESULT_FILENAME
     return PipelineArtifact(
         path=asset.path,
         sha256=asset.sha256,
@@ -145,11 +175,19 @@ def run_colmap_pipeline(context: TaskContext) -> PipelineArtifact:
         format=asset.format,
         mime_type=asset.mime_type,
         metadata=asset.metadata,
-        storage_key=result_storage_key(
-            context.task.project_id, context.task.id, filename=SCENE_RESULT_FILENAME
-        ),
+        storage_key=result_storage_key(context.task.project_id, context.task.id, filename=filename),
         cleanup_dir=work_dir,
     )
+
+
+def run_colmap_pipeline(context: TaskContext) -> PipelineArtifact:
+    """Execute the default COLMAP/OpenMVS mesh pipeline for one claimed task."""
+    return _run_scene_pipeline(context, capability=SceneRepresentation.MESH)
+
+
+def run_splat_pipeline(context: TaskContext) -> PipelineArtifact:
+    """Execute the opt-in Splatfacto pipeline for one claimed task."""
+    return _run_scene_pipeline(context, capability=SceneRepresentation.GAUSSIAN_SPLAT)
 
 
 def _unavailable_pipeline(context: TaskContext) -> PipelineArtifact:
@@ -159,14 +197,25 @@ def _unavailable_pipeline(context: TaskContext) -> PipelineArtifact:
     )
 
 
+def _unavailable_splat_pipeline(context: TaskContext) -> PipelineArtifact:
+    """Fail honestly when the neural runtime is missing or broken."""
+    raise GenerationFailure(
+        SPLAT_RUNTIME_UNAVAILABLE, "The neural scene runtime is not available in this worker."
+    )
+
+
 def _bootstrap() -> None:
-    """Verify the toolchain and register the pipeline in the worker process."""
+    """Verify this worker's capability and register its pipeline."""
     settings = get_settings()
     if not settings.scene_reconstruction_enabled:
         logger.warning(
             "scene_reconstruction_disabled",
             extra={"operation": "scene_reconstruction", "worker_service_name": "scene-worker"},
         )
+        return
+
+    if settings.scene_splat_worker:
+        _bootstrap_splat(settings)
         return
 
     try:
@@ -189,13 +238,49 @@ def _bootstrap() -> None:
         "scene_pipeline_ready",
         extra={
             "operation": "scene_reconstruction",
+            "representation": MESH,
             "tool_versions": report.as_dict(),
         },
     )
     register_pipeline(TaskType.SCENE, run_colmap_pipeline)
 
 
+def _bootstrap_splat(settings) -> None:
+    """Verify COLMAP plus the pinned neural runtime before accepting tasks."""
+    try:
+        from scene_reconstruction.config import build_config_from_settings
+        from scene_reconstruction.neural_pipeline import NeuralReconstructor
+        from scene_reconstruction.preflight import verify_toolchain
+
+        config = build_config_from_settings(settings, representation=GAUSSIAN_SPLAT)
+        report = verify_toolchain(config, include_openmvs=False)
+        runtime = NeuralReconstructor(config).runtime_report()
+    except Exception:
+        logger.exception(
+            "splat_pipeline_unavailable",
+            extra={"operation": "scene_reconstruction", "worker_service_name": "splat-worker"},
+        )
+        register_pipeline(TaskType.SCENE, _unavailable_splat_pipeline)
+        return
+
+    logger.info(
+        "splat_pipeline_ready",
+        extra={
+            "operation": "scene_reconstruction",
+            "representation": GAUSSIAN_SPLAT,
+            "tool_versions": report.as_dict(),
+            "runtime": runtime.as_metadata(),
+        },
+    )
+    register_pipeline(TaskType.SCENE, run_splat_pipeline)
+
+
 _bootstrap()
 
 
-__all__ = ["SCENE_RESULT_FILENAME", "run_colmap_pipeline"]
+__all__ = [
+    "SCENE_RESULT_FILENAME",
+    "SPLAT_RESULT_FILENAME",
+    "run_colmap_pipeline",
+    "run_splat_pipeline",
+]

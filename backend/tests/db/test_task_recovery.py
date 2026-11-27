@@ -152,6 +152,41 @@ def test_a_stale_task_is_requeued_and_redelivered(
     assert events[0].payload["task_id"] == str(task.id)
 
 
+def test_a_requeued_splat_task_keeps_its_persisted_representation(
+    db_session: Session,
+    recovery_settings: Settings,
+    make_user,
+    make_project,
+    make_task,
+) -> None:
+    """Increment 15: recovery must not fall back to the current mesh default."""
+    now = datetime.now(UTC)
+    project = make_project(make_user(), type="SCENE")
+    task = make_task(
+        project,
+        task_type="SCENE",
+        status="PROCESSING",
+        worker_id="dead-splat-worker",
+        started_at=now - timedelta(seconds=1000),
+        heartbeat_at=now - timedelta(seconds=1000),
+        lease_expires_at=now - timedelta(seconds=10),
+        parameters={
+            "algorithm": "COLMAP_SPLATFACTO",
+            "output_format": "PLY",
+            "representation": "GAUSSIAN_SPLAT",
+            "method": "NERFSTUDIO_SPLATFACTO",
+        },
+    )
+    db_session.commit()
+
+    summary = TaskRecoveryService(db_session, recovery_settings).recover(now=now)
+
+    assert summary.requeued == 1
+    events = _events(db_session, task.id)
+    assert len(events) == 1
+    assert events[0].payload["representation"] == "GAUSSIAN_SPLAT"
+
+
 def test_a_live_lease_is_left_alone(
     db_session: Session,
     recovery_settings: Settings,

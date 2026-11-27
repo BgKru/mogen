@@ -42,7 +42,7 @@ export function ModelViewerPage() {
   const resultQuery = useCurrentResult(id);
   const statusQuery = useProjectProcessingStatus(id);
   const result = resultQuery.data ?? null;
-  const loader = useModelLoader(id ?? "", Boolean(id && result), result?.id);
+  const loader = useModelLoader(id ?? "", Boolean(id && result), result?.id, result?.format);
   const settledRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -149,6 +149,9 @@ export function ModelViewerPage() {
             model={loader.model}
             status={loader.status}
             stats={loader.stats}
+            splatStats={loader.splatStats}
+            bounds={loader.bounds}
+            kind={loader.kind}
             error={loader.error}
             onRetry={loader.reload}
           />
@@ -157,6 +160,7 @@ export function ModelViewerPage() {
           project={displayProject}
           result={result}
           stats={loader.stats}
+          splatStats={loader.splatStats}
           latestTask={latestTask}
           isProcessing={isProcessing}
         />

@@ -2023,8 +2023,8 @@ Potential improvements:
 
 Potential improvements:
 
-- More advanced COLMAP matching strategies.
-- Automatic image quality evaluation.
+- More advanced COLMAP matching strategies — implemented as an opt-in ALIKED + LightGlue backend with COLMAP SIFT as the default/fallback (see `docs/additions/12_advanced_feature_matching.md` and `docs/reviews/increment12_closeout.md`); neural mode is not the default because the current single-scene benchmark shows no quality improvement.
+- Automatic image quality evaluation — implemented as an advisory shared analyzer in `ml/image_quality/` (see `docs/additions/11_image_quality_analysis.md`); it reports findings and perceptual near-duplicates without rejecting or removing photographs.
 - Automatic camera trajectory visualization.
 - Reconstruction component merging.
 - Large-scene processing.

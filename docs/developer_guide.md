@@ -82,9 +82,16 @@ mogen/
 - Docker Engine 24+ with Compose v2.24+ (or Docker Desktop).
 - Windows: WSL2, Docker data root with ~50 GB free for the ML images.
 - GPU path: NVIDIA GPU + driver + NVIDIA Container Toolkit. The base stack is
-  CPU-capable; `compose.gpu.yaml` reserves the GPU for both ML workers.
+  CPU-capable; `compose.gpu.yaml` reserves the GPU for both ML workers. On a GPU
+  host, put `COMPOSE_FILE=compose.yaml;compose.gpu.yaml` in `.env` (`:` on
+  Linux/macOS) so plain `docker compose` commands include the overlay, or pass
+  `-f compose.yaml -f compose.gpu.yaml`. With the overlay the object worker
+  requires CUDA (`OBJECT_DEVICE=cuda:0`, `OBJECT_ALLOW_CPU_FALLBACK=false`) and
+  COLMAP uses its GPU build.
 - No host Python/Node is required for the normal workflow; every command runs
-  inside the pinned images.
+  inside the pinned images. Torch installed on the host is not used by the
+  project — the containers carry their own CUDA PyTorch, and host-native ML runs
+  are not a supported path.
 
 Pinned versions and licensing are recorded in
 [`architecture/phase0_decisions.md`](architecture/phase0_decisions.md) and the
@@ -152,9 +159,9 @@ Production guards: `APP_ENV=production` rejects the development CSRF secret and
 ## 6. Compose commands
 
 ```bash
-# Development (CPU-capable)
+# Development (CPU-capable; with COMPOSE_FILE in .env this is already the GPU stack)
 docker compose up -d --build
-docker compose -f compose.yaml -f compose.gpu.yaml up -d --build   # GPU
+docker compose -f compose.yaml -f compose.gpu.yaml up -d --build   # GPU, explicit
 
 # Rebuild one service after code changes (no bind mounts)
 docker compose up -d --build api
@@ -338,8 +345,10 @@ docker run --rm mogen-frontend:dev npm run test:run
 docker run --rm mogen-frontend:dev npm run build
 ```
 
-Expected counts at 1.0.0: **525 backend**, **148 frontend**, **75 scene ML + 1
-skipped**, **35 object ML + 1 skipped**, **17/17 E2E**.
+Expected counts after increment 12 (2026-11-25): **541 backend**, **173 frontend**,
+**119 scene ML + 2 skipped**, **39 object ML + 1 skipped**, **47 image-quality**,
+**1 feature interoperability** (opt-in), **17/17 E2E** (last run at 1.0.0). The
+scene suite now requires the rebuilt neural-capable `mogen-scene-worker:dev`.
 
 ---
 

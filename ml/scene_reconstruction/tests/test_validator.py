@@ -122,6 +122,46 @@ def test_external_buffer_reference_is_rejected(tmp_path):
         validate_scene_glb_bytes(_glb_with_document(document, binary))
 
 
+# -- increment 14: normals, PBR factors and texture integrity ---------------
+
+
+def test_scene_normals_are_validated_when_present(tmp_path):
+    path = textured_glb(tmp_path / "scene.glb", include_normals=True)
+    validation = validate_scene_glb(path)
+    assert validation.has_normals is True
+
+    document, binary = _split(path.read_bytes())
+    accessors = document["accessors"]
+    for primitive in document["meshes"][0]["primitives"]:
+        if "NORMAL" in primitive["attributes"]:
+            accessors[primitive["attributes"]["NORMAL"]]["type"] = "VEC2"
+    with pytest.raises(SceneExportError):
+        validate_scene_glb_bytes(_glb_with_document(document, binary))
+
+
+def test_scene_pbr_factors_must_be_in_range(tmp_path):
+    path = textured_glb(tmp_path / "scene.glb")
+    document, binary = _split(path.read_bytes())
+    document["materials"][0]["pbrMetallicRoughness"]["metallicFactor"] = 3.0
+    with pytest.raises(SceneExportError):
+        validate_scene_glb_bytes(_glb_with_document(document, binary))
+
+
+def test_scene_texture_image_integrity_is_checked(tmp_path):
+    path = textured_glb(tmp_path / "scene.glb")
+    document, binary = _split(path.read_bytes())
+    document["bufferViews"][document["images"][0]["bufferView"]]["byteLength"] = 0
+    with pytest.raises(SceneExportError):
+        validate_scene_glb_bytes(_glb_with_document(document, binary))
+
+
+def test_scene_missing_normal_attribute_is_only_a_warning(tmp_path):
+    path = textured_glb(tmp_path / "scene.glb")
+    validation = validate_scene_glb(path)
+    assert validation.has_normals is False
+    assert "scene has no NORMAL attributes" in validation.warnings
+
+
 def _split(data: bytes) -> tuple[dict, bytes]:
     _, _, total = struct.unpack_from("<III", data, 0)
     offset = 12

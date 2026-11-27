@@ -149,3 +149,83 @@ def test_auth_rate_limit_defaults_and_bounds() -> None:
         Settings(auth_rate_limit_attempts=0)
     with pytest.raises(ValidationError):
         Settings(auth_rate_limit_window_seconds=0)
+
+
+def test_image_quality_defaults_and_bounds() -> None:
+    """The advisory analyzer is enabled with validated, documented defaults."""
+    settings = Settings()
+
+    assert settings.image_quality_enabled is True
+    assert settings.image_quality_required is False
+    assert settings.image_quality_blur_threshold == 100.0
+    assert settings.image_quality_min_short_edge == 640
+    assert settings.image_quality_hash_distance_threshold == 10
+    assert settings.redacted()["image_quality_blur_threshold"] == 100.0
+    assert Settings(image_quality_enabled=False).image_quality_enabled is False
+
+    with pytest.raises(ValidationError):
+        Settings(image_quality_blur_threshold=-1)
+    with pytest.raises(ValidationError):
+        Settings(
+            image_quality_underexposure_threshold=220,
+            image_quality_overexposure_threshold=210,
+        )
+    with pytest.raises(ValidationError):
+        Settings(image_quality_clipping_ratio_threshold=0)
+    with pytest.raises(ValidationError):
+        Settings(image_quality_hash_distance_threshold=64)
+    with pytest.raises(ValidationError):
+        Settings(image_quality_ssim_threshold=1.5)
+
+
+def test_scene_feature_defaults_keep_sift_opt_out() -> None:
+    """Increment 12: SIFT stays default and neural matching is opt-in."""
+    settings = Settings()
+
+    assert settings.scene_feature_backend == "COLMAP_SIFT"
+    assert settings.scene_feature_profile == "sift_default"
+    assert settings.scene_feature_fallback_to_sift is True
+    assert settings.scene_feature_max_keypoints == 2048
+    assert settings.scene_feature_image_max_size == 1600
+    assert settings.scene_feature_pair_strategy == "EXHAUSTIVE"
+    assert settings.scene_feature_device == "auto"
+    assert settings.redacted()["scene_feature_backend"] == "COLMAP_SIFT"
+
+
+def test_scene_feature_names_are_normalized() -> None:
+    settings = Settings(
+        scene_feature_backend="aliked_lightglue",
+        scene_feature_profile="ALIKED_LIGHTGLUE",
+        scene_feature_pair_strategy="sequential",
+        scene_feature_device="CUDA",
+    )
+    assert settings.scene_feature_backend == "ALIKED_LIGHTGLUE"
+    assert settings.scene_feature_profile == "aliked_lightglue"
+    assert settings.scene_feature_pair_strategy == "SEQUENTIAL"
+    assert settings.scene_feature_device == "cuda"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"scene_feature_backend": "COLMAP_SIFT", "scene_feature_profile": "aliked_lightglue"},
+        {
+            "scene_feature_backend": "ALIKED_LIGHTGLUE",
+            "scene_feature_profile": "sift_default",
+        },
+        {"scene_feature_backend": "SUPERGLUE"},
+        {"scene_feature_profile": "superpoint"},
+        {"scene_feature_pair_strategy": "RANDOM"},
+        {"scene_feature_device": "tpu"},
+        {"scene_feature_match_threshold": 1.5},
+        {"scene_feature_max_keypoints": 16},
+        {"scene_feature_image_max_size": 128},
+        {"scene_feature_sequential_overlap": 0},
+        {"scene_feature_min_matches": -1},
+        {"scene_feature_max_vram_mb": 128},
+        {"scene_feature_max_pairs": 0},
+    ],
+)
+def test_scene_feature_settings_are_validated(overrides) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**overrides)

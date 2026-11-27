@@ -15,8 +15,9 @@ import uuid
 from datetime import UTC, datetime
 
 from app.db.models import GenerationTask, OutboxMessage, StorageCleanupJob
-from app.db.models.enums import OutboxEventType
+from app.db.models.enums import OutboxEventType, TaskType
 from app.repositories import OutboxRepository
+from app.services.scene_methods import persisted_representation
 
 GENERATION_AGGREGATE = "GenerationTask"
 CLEANUP_AGGREGATE = "StorageCleanupJob"
@@ -29,8 +30,15 @@ def _timestamp(value: datetime | None) -> str:
 
 
 def generation_requested_payload(*, event_id: uuid.UUID, task: GenerationTask) -> dict[str, object]:
-    """Build the ``generation.requested`` payload (Section 13.7)."""
-    return {
+    """Build the ``generation.requested`` payload (Section 13.7).
+
+    ``representation`` was added by increment 15. It is read from the persisted
+    task parameters, never from the current environment, so a task requeued by
+    the recovery service still routes to the worker that can execute it. The
+    field is additive: messages written before the increment have no value and
+    resolve to the default ``MESH`` representation.
+    """
+    payload: dict[str, object] = {
         "event_id": str(event_id),
         "event_type": OutboxEventType.GENERATION_REQUESTED.value,
         "schema_version": OUTBOX_SCHEMA_VERSION,
@@ -39,6 +47,9 @@ def generation_requested_payload(*, event_id: uuid.UUID, task: GenerationTask) -
         "task_type": task.task_type,
         "created_at": _timestamp(task.created_at),
     }
+    if task.task_type == TaskType.SCENE.value:
+        payload["representation"] = persisted_representation(task.parameters).value
+    return payload
 
 
 def cleanup_requested_payload(*, event_id: uuid.UUID, job: StorageCleanupJob) -> dict[str, object]:

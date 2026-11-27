@@ -1,7 +1,8 @@
 """Object-generation pipeline adapter for the Phase 4 worker.
 
 This module is imported only by the Object Worker (Celery ``--include``). It
-connects the TripoSR package to the existing worker lifecycle:
+connects the configured object generator (TripoSR by default, optionally Stable
+Fast 3D) to the existing worker lifecycle:
 
 * the worker has already claimed the task and moved the project to
   ``PROCESSING`` before the pipeline runs;
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 SOURCE_IMAGE_NOT_FOUND = "SOURCE_IMAGE_NOT_FOUND"
 
 
-def _source_image_bytes(context: TaskContext) -> bytes:
+def _source_image(context: TaskContext) -> tuple[bytes, str]:
     """Read the task's immutable source image through the storage backend."""
     images = TaskRepository(context.session).list_input_images(context.task.id)
     if not images:
@@ -53,11 +54,11 @@ def _source_image_bytes(context: TaskContext) -> bytes:
         ) from exc
     if not data:
         raise GenerationFailure(SOURCE_IMAGE_NOT_FOUND, "The source photograph is empty.")
-    return data
+    return data, image.original_filename
 
 
-def run_triposr_pipeline(context: TaskContext) -> PipelineArtifact:
-    """Execute the real TripoSR pipeline for one claimed task."""
+def run_object_pipeline(context: TaskContext) -> PipelineArtifact:
+    """Execute the configured object generator for one claimed task."""
     from object_generation.exceptions import ObjectGenerationError
     from object_generation.pipeline import (
         PipelineCallbacks,
@@ -66,7 +67,7 @@ def run_triposr_pipeline(context: TaskContext) -> PipelineArtifact:
     )
 
     config = build_config_from_settings(context.settings)
-    image_bytes = _source_image_bytes(context)
+    image_bytes, filename = _source_image(context)
 
     work_root = Path(context.settings.object_work_dir)
     work_dir = work_root / str(context.task.id)
@@ -97,6 +98,8 @@ def run_triposr_pipeline(context: TaskContext) -> PipelineArtifact:
             work_dir=work_dir,
             callbacks=callbacks,
             max_image_dimension=context.settings.max_image_dimension,
+            image_id=str(context.task.id),
+            filename=filename,
         )
     except ObjectGenerationError as exc:
         logger.error(
@@ -135,7 +138,7 @@ def run_triposr_pipeline(context: TaskContext) -> PipelineArtifact:
 
 
 def _bootstrap() -> None:
-    """Initialize the model and register the pipeline in the worker process."""
+    """Initialize the configured generator and register the pipeline."""
     settings = get_settings()
     if not settings.object_generation_enabled:
         logger.warning(
@@ -144,27 +147,31 @@ def _bootstrap() -> None:
         )
         return
 
-    from object_generation.model_loader import warm_up
+    from object_generation.generator_factory import create_generator
     from object_generation.pipeline import build_config_from_settings
 
     config = build_config_from_settings(settings)
-    # OBJ-AC-01/02/03: verify the cache and initialize the configured device
-    # before the worker accepts a task. A failure here stops the worker instead
-    # of failing every task later.
-    model = warm_up(config)
+    # OBJ-AC-01/02/03 and 13 Section 4.2: verify the cache and initialize the
+    # configured generator before the worker accepts a task. A failure here
+    # stops the worker instead of failing every task later.
+    generator = create_generator(config, load=True)
     logger.info(
         "object_generation_pipeline_ready",
         extra={
             "operation": "object_generation",
-            "device": model.device.device,
-            "device_name": model.device.name,
-            "model_revision": settings.object_model_revision,
+            "worker_service_name": "object-worker",
+            "generator": generator.name,
+            "generator_revision": generator.revision,
+            "model_id": generator.model_id,
+            "model_revision": generator.model_revision,
+            "device": getattr(generator, "device", config.device),
+            "generator_fallback": config.generator_fallback,
         },
     )
-    register_pipeline(TaskType.OBJECT, run_triposr_pipeline)
+    register_pipeline(TaskType.OBJECT, run_object_pipeline)
 
 
 _bootstrap()
 
 
-__all__ = ["run_triposr_pipeline", "SOURCE_IMAGE_NOT_FOUND"]
+__all__ = ["run_object_pipeline", "SOURCE_IMAGE_NOT_FOUND"]

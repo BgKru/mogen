@@ -10,6 +10,7 @@ is validated independently before it can become a result.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,8 +96,15 @@ def repack_scene(
     output_path: Path,
     *,
     require_textures: bool = True,
+    enhance: Callable[[trimesh.Scene], tuple[trimesh.Scene, bool]] | None = None,
 ) -> SceneGLBValidation:
-    """Load the first usable export source and write one embedded-texture GLB."""
+    """Load the first usable export source and write one embedded-texture GLB.
+
+    ``enhance`` is the optional scene post-processing callback. It receives the
+    loaded scene, mutates/replaces geometry in place (preserving the graph,
+    transforms and materials) and returns ``(scene, include_normals)``. It is
+    only called when post-processing is explicitly enabled.
+    """
     if not sources:
         raise SceneExportError(GLB_EXPORT_FAILED, "The OpenMVS export produced no asset.")
     output = Path(output_path)
@@ -110,7 +118,19 @@ def repack_scene(
                 raise SceneExportError(
                     GLB_EXPORT_FAILED, "The exported scene contains no usable geometry."
                 )
-            scene.export(str(output), file_type="glb")
+            include_normals = False
+            if enhance is not None:
+                scene, include_normals = enhance(scene)
+                geometry = scene_mesh_stats(scene, source=str(source))
+                if geometry.vertices < 3 or geometry.faces < 1:
+                    raise SceneExportError(
+                        GLB_EXPORT_FAILED,
+                        "The enhanced scene contains no usable geometry.",
+                    )
+            export_options = {"file_type": "glb"}
+            if include_normals:
+                export_options["include_normals"] = True
+            scene.export(str(output), **export_options)
             if not output.is_file() or output.stat().st_size <= 0:
                 raise SceneExportError(GLB_EXPORT_FAILED, "The repacked GLB was not written.")
             validation = validate_scene_glb(output, require_textures=require_textures)

@@ -58,6 +58,18 @@ def _config_from_args(args: argparse.Namespace) -> SceneConfig:
         max_threads=args.threads,
         enable_mesh_refinement=not args.no_refine,
         enable_texture_generation=not args.no_texture,
+        feature_backend=args.feature_backend,
+        feature_profile=args.feature_profile,
+        feature_fallback_to_sift=args.feature_fallback,
+        feature_max_keypoints=args.feature_max_keypoints,
+        feature_image_max_size=args.feature_image_max_size,
+        feature_pair_strategy=args.feature_pair_strategy,
+        feature_sequential_overlap=args.feature_sequential_overlap,
+        feature_min_matches=args.feature_min_matches,
+        feature_match_threshold=args.feature_match_threshold,
+        feature_device=args.feature_device,
+        feature_max_vram_mb=args.feature_max_vram_mb,
+        feature_max_pairs=args.feature_max_pairs,
     )
     if args.min_registered_images is not None or args.min_registration_ratio is not None:
         config = dataclasses.replace(
@@ -98,6 +110,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-gpu", action="store_true", help="disable COLMAP GPU features")
     parser.add_argument("--no-refine", action="store_true")
     parser.add_argument("--no-texture", action="store_true")
+    parser.add_argument(
+        "--feature-backend",
+        choices=("COLMAP_SIFT", "ALIKED_LIGHTGLUE"),
+        default="COLMAP_SIFT",
+        help="feature extraction/matching backend (default: COLMAP SIFT)",
+    )
+    parser.add_argument(
+        "--feature-profile",
+        choices=("sift_default", "aliked_lightglue", "aliked_lightglue_fast"),
+        default="sift_default",
+    )
+    parser.add_argument(
+        "--feature-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="fall back to COLMAP SIFT when a recoverable neural stage fails",
+    )
+    parser.add_argument("--feature-max-keypoints", type=int, default=2048)
+    parser.add_argument("--feature-image-max-size", type=int, default=1600)
+    parser.add_argument(
+        "--feature-pair-strategy", choices=("EXHAUSTIVE", "SEQUENTIAL"), default="EXHAUSTIVE"
+    )
+    parser.add_argument("--feature-sequential-overlap", type=int, default=5)
+    parser.add_argument("--feature-min-matches", type=int, default=30)
+    parser.add_argument("--feature-match-threshold", type=float, default=0.1)
+    parser.add_argument("--feature-device", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--feature-max-vram-mb", type=int, default=9000)
+    parser.add_argument("--feature-max-pairs", type=int, default=20000)
     parser.add_argument(
         "--verify-tools",
         action="store_true",

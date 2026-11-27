@@ -1,0 +1,23 @@
+# Optional neural feature-matching dependencies for the scene worker only
+# (docs/additions/12_advanced_feature_matching.md Section 2). The API and object
+# worker images never install this file.
+#
+# Versions were validated against the pinned COLMAP 4.2.1 binary with a
+# CPU-torch spike on 2026-11-25; the runtime image installs the CUDA wheels
+# selected by these same PyPI versions (see docs/reviews/increment12_closeout.md).
+torch==2.14.1
+torchvision==0.29.2
+kornia==0.9.2
+kornia-rs==0.2.0
+# LightGlue declares opencv-python and matplotlib as dependencies; installing
+# the same distributions keeps `pip check` clean. The GUI OpenCV wheel imports
+# fine in the worker image, which already carries libGL for the OpenMVS build.
+opencv-python==5.1.0.95
+matplotlib==3.11.2
+# pycolmap 4.2.1 exactly matches the pinned COLMAP 4.2.1 runtime and writes a
+# database the mapper accepts (verified in the compatibility spike).
+pycolmap==4.2.1
+# LightGlue is distributed from git, not PyPI, and its declared dependencies
+# would install a second OpenCV/torch family. The Dockerfile installs the pinned
+# commit with --no-deps after the exact subset above:
+#   lightglue @ git+https://github.com/cvg/LightGlue@5a650c444718caffc2669dc0094cde908f42dd73

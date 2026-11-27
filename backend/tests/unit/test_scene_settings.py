@@ -22,6 +22,10 @@ def test_scene_defaults_are_the_documented_ones() -> None:
     assert settings.scene_min_registered_images == 3
     assert settings.scene_min_registration_ratio == 0.5
     assert settings.scene_output_format == "GLB"
+    assert settings.scene_feature_backend == "COLMAP_SIFT"
+    assert settings.scene_feature_profile == "sift_default"
+    assert settings.scene_feature_fallback_to_sift is True
+    assert settings.scene_feature_pair_strategy == "EXHAUSTIVE"
     assert str(settings.scene_colmap_executable) == "/usr/local/bin/colmap"
     assert str(settings.scene_openmvs_bin_dir) == "/usr/local/bin/OpenMVS"
 

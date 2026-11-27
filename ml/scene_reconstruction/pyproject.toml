@@ -17,5 +17,6 @@ markers = [
     "ml: tests that exercise ML pipelines",
     "gpu: tests that require a CUDA-capable device",
     "scene_binaries: tests that execute the real COLMAP/OpenMVS executables",
+    "real_splat: tests that run the real Nerfstudio Splatfacto/gsplat runtime",
     "slow: tests that take a long time to execute",
 ]

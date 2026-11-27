@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from PIL import Image
+
 from object_generation.config import ObjectGenerationConfig
 from object_generation.exceptions import ImagePreprocessingError
 from object_generation.preprocessing import (
@@ -20,7 +22,6 @@ from object_generation.preprocessing import (
     remove_background,
     save_intermediates,
 )
-from PIL import Image
 
 
 def _config(tmp_path: Path, **overrides) -> ObjectGenerationConfig:

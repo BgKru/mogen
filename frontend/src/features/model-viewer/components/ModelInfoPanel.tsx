@@ -7,12 +7,13 @@ import { ProjectStatusBadge, ProjectTypeBadge } from "../../../shared/components
 import { formatDate, formatFileSize, pluralizeImages } from "../../../shared/lib/format";
 import { PROJECT_TYPE_LABELS } from "../../../shared/lib/labels";
 import type { GenerationResult, GenerationTaskSummary, Project } from "../../../shared/types/api";
-import type { ModelStats } from "../types/viewer.types";
+import type { ModelStats, SplatStats } from "../types/viewer.types";
 
 interface ModelInfoPanelProps {
   project: Project;
   result: GenerationResult;
   stats: ModelStats | null;
+  splatStats?: SplatStats | null;
   latestTask: GenerationTaskSummary | null;
   isProcessing: boolean;
 }
@@ -29,22 +30,38 @@ function formatCount(value: number | null): string {
 /**
  * Result metadata panel (roadmap 7.4/7.6, 02_ui_ux_specification.md 4.7).
  *
- * Live measurements from the parsed model take precedence over the persisted
- * metadata; both describe the same validated asset. A failed regeneration is
+ * Live measurements from the parsed asset take precedence over the persisted
+ * metadata; both describe the same validated asset. A Gaussian-splat result
+ * shows splat facts (count, SH degree) instead of mesh triangle statistics, and
+ * the download button names the actual artifact format. A failed regeneration is
  * reported without hiding the preserved current result.
  */
 export function ModelInfoPanel({
   project,
   result,
   stats,
+  splatStats = null,
   latestTask,
   isProcessing,
 }: ModelInfoPanelProps) {
+  const isSplat = (result.format || "").toUpperCase() === "PLY";
   const meshes = stats?.meshes ?? metadataNumber(result.metadata, "meshes_count");
   const vertices = stats?.vertices ?? metadataNumber(result.metadata, "vertices_count");
   const triangles = stats?.triangles ?? metadataNumber(result.metadata, "faces_count");
   const materials = stats?.materials ?? metadataNumber(result.metadata, "materials_count");
   const textures = stats?.textures ?? metadataNumber(result.metadata, "textures_count");
+  const artifactMetadata =
+    result.metadata.artifact && typeof result.metadata.artifact === "object"
+      ? (result.metadata.artifact as Record<string, unknown>)
+      : null;
+  const gaussians =
+    splatStats?.gaussianCount ??
+    metadataNumber(result.metadata, "gaussian_count") ??
+    (artifactMetadata ? metadataNumber(artifactMetadata, "gaussian_count") : null);
+  const shDegree =
+    splatStats?.shDegree ??
+    metadataNumber(result.metadata, "sh_degree") ??
+    (artifactMetadata ? metadataNumber(artifactMetadata, "sh_degree") : null);
 
   return (
     <aside className="flex h-fit flex-col gap-4 rounded-2xl border border-border bg-surface p-5">
@@ -77,28 +94,39 @@ export function ModelInfoPanel({
         <InfoRow label="Формат" value={result.format || "GLB"} />
         <InfoRow label="Размер файла" value={formatFileSize(result.fileSizeBytes)} />
         <InfoRow label="Создан" value={formatDate(result.createdAt)} />
-        <InfoRow label="Мешей" value={formatCount(meshes)} />
-        <InfoRow label="Вершин" value={formatCount(vertices)} />
-        <InfoRow label="Полигонов" value={formatCount(triangles)} />
-        <InfoRow label="Материалов" value={formatCount(materials)} />
-        <InfoRow label="Текстур" value={formatCount(textures)} />
+        {isSplat ? (
+          <>
+            <InfoRow label="Гауссовых точек" value={formatCount(gaussians)} />
+            <InfoRow label="Степень SH" value={formatCount(shDegree)} />
+          </>
+        ) : (
+          <>
+            <InfoRow label="Мешей" value={formatCount(meshes)} />
+            <InfoRow label="Вершин" value={formatCount(vertices)} />
+            <InfoRow label="Полигонов" value={formatCount(triangles)} />
+            <InfoRow label="Материалов" value={formatCount(materials)} />
+            <InfoRow label="Текстур" value={formatCount(textures)} />
+          </>
+        )}
       </dl>
 
       <div className="rounded-xl border border-success/40 bg-success/5 p-4">
         <p className="text-sm font-medium text-text-primary">Результат готов</p>
         <p className="mt-1 text-xs text-text-secondary">
-          {stats?.hasTextures
-            ? "Модель содержит встроенные текстуры."
-            : stats?.hasVertexColors
-              ? "Модель содержит вершинные цвета."
-              : "Файл GLB проверен и доступен для скачивания."}
+          {isSplat
+            ? "Результат представлен гауссовыми сплатами (PLY). Это не полигональная сетка."
+            : stats?.hasTextures
+              ? "Модель содержит встроенные текстуры."
+              : stats?.hasVertexColors
+                ? "Модель содержит вершинные цвета."
+                : "Файл GLB проверен и доступен для скачивания."}
         </p>
         <a
           href={projectDownloadUrl(project.id)}
           download
           className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
-          Скачать GLB
+          {isSplat ? "Скачать PLY" : "Скачать GLB"}
         </a>
       </div>
 

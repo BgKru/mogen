@@ -991,6 +991,14 @@ Texture generation must:
 
 The texture generation step is required for the final MVP scene quality.
 
+Post-MVP increment 14 adds an optional, disabled-by-default post-reconstruction
+enhancement substage after `RefineMesh`/`TextureMesh` (see
+[`../additions/14_mesh_texture_enhancement.md`](../additions/14_mesh_texture_enhancement.md)).
+It never repeats those OpenMVS stages, never regenerates OpenMVS UVs/atlases by
+default, and preserves multi-mesh transforms, material assignments and embedded
+texture references. When it is disabled (the default), the existing scene output
+and validation path is unchanged.
+
 ### 10.12. Texture Validation
 
 Verify:
@@ -2186,3 +2194,16 @@ Related documents:
 - `AI_DEVELOPMENT_GUIDE.md` — development workflow, quality gates and agent rules.
 
 The complete reconstruction pipeline must be implemented according to this document and the pinned versions of COLMAP and OpenMVS.
+---
+
+## Neural representation (increment 15)
+
+An optional, deployment-selected Gaussian-splat representation is specified in
+[`../additions/15_neural_scene_reconstruction.md`](../additions/15_neural_scene_reconstruction.md).
+COLMAP + OpenMVS remains the default and produces the same GLB contract described
+in this document. The neural path reuses the validated COLMAP sparse model and
+undistorted images, stops before every OpenMVS stage, registers a Gaussian PLY
+as a distinct result representation, and remains unavailable unless the
+dedicated neural worker image passes its runtime preflight. Nothing in Section
+13 (result persistence) or the existing stage identifiers changes for mesh
+reconstructions.

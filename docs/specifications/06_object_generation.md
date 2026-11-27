@@ -633,7 +633,7 @@ The following parameters must be configurable.
 | remove_background | true | Automatic background removal |
 | foreground_ratio | 0.85 | Foreground scale in input image |
 | output_format | glb | Mesh export format |
-| bake_texture | false | Texture atlas generation |
+| bake_texture | false | Optional vertex-colour/source-appearance baking (increment 14) |
 
 These defaults follow the official implementation where applicable.
 
@@ -755,18 +755,23 @@ The GLB file must contain the necessary material settings so that Three.js can d
 
 ### 10.3. Texture Baking
 
-TripoSR supports optional texture baking.
+The MVP default is `bake_texture=false` and the default TripoSR path exports
+vertex colours. Post-MVP increment 14 implements the optional baking stage in
+the shared post-generation enhancement path (see
+[`../additions/14_mesh_texture_enhancement.md`](../additions/14_mesh_texture_enhancement.md)):
 
-The official implementation provides:
+- when vertex colours exist and no texture is present, xatlas generates a UV
+  atlas and a deterministic CPU rasteriser bakes the existing vertex colours
+  into an embedded base-colour image;
+- a PBR metallic-roughness material references that image, so the exported GLB
+  remains self-contained;
+- a generator-provided texture (for example Stable Fast 3D) is preserved rather
+  than rebaked;
+- `OBJECT_BAKE_TEXTURE=true` is accepted only because the end-to-end
+  bake/export/validation path exists; it is still off by default.
 
-- `--bake-texture`
-- `--texture-resolution`
-
-Texture baking creates a texture atlas for the extracted mesh.
-
-This functionality may be enabled through configuration after verifying the final output and its material references.
-
-It is not mandatory for the initial MVP.
+The upstream TripoSR `--bake-texture` CLI path is not used. It remains optional
+and is not required for the MVP.
 
 ### 10.4. Texture Validation
 

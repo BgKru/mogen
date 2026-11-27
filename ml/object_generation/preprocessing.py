@@ -240,6 +240,43 @@ def prepare_model_input(
     )
 
 
+def prepare_rgba_input(
+    image: Image.Image,
+    *,
+    config: ObjectGenerationConfig,
+    session: Any,
+    source_format: str = "",
+) -> PreprocessResult:
+    """Prepare an RGBA foreground image for generators that need alpha.
+
+    This is the same single background-removal / crop / pad / ratio pass as
+    :func:`prepare_model_input`, but it keeps the alpha channel and does not
+    resize or composite: SF3D resizes to its own conditioning size internally
+    and must never run background removal again
+    (13_advanced_object_generation.md Section 5.4).
+    """
+    source_width, source_height = image.size
+    background_removed = config.remove_background
+
+    rgba = remove_background(image, session) if config.remove_background else image.convert("RGBA")
+
+    bbox = foreground_bbox(rgba)
+    cropped = crop_foreground(rgba)
+    padded = pad_to_square(cropped)
+    padded = apply_foreground_ratio(padded, config.foreground_ratio)
+
+    return PreprocessResult(
+        image=padded,
+        width=padded.width,
+        height=padded.height,
+        source_width=source_width,
+        source_height=source_height,
+        source_format=source_format,
+        foreground_bbox=bbox,
+        background_removed=background_removed,
+    )
+
+
 def save_intermediates(
     *, work_dir: Path, original_bytes: bytes, result: PreprocessResult, suffix: str
 ) -> Path:

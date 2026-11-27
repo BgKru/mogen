@@ -434,7 +434,9 @@ def test_failed_regeneration_preserves_the_current_result(
     ("column", "value"),
     [
         ("file_size_bytes", 0),
-        ("format", "PLY"),
+        # PLY became a valid format in increment 15; an unlisted value stays
+        # rejected by the extended CHECK constraint.
+        ("format", "SPLAT"),
         ("sha256", "short"),
     ],
 )

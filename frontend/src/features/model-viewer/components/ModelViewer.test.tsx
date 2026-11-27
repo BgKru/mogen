@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial } from "three";
+import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial, Vector3 } from "three";
 import { describe, expect, it, vi } from "vitest";
 
 import { ModelViewer } from "./ModelViewer";
@@ -86,5 +86,30 @@ describe("ModelViewer", () => {
     expect(() =>
       fireEvent.click(screen.getByRole("button", { name: "Открыть на весь экран" })),
     ).not.toThrow();
+  });
+
+  it("renders a loaded splat with splat-specific diagnostics", () => {
+    const { container } = render(
+      <ModelViewer
+        model={new Group()}
+        status="loaded"
+        stats={null}
+        splatStats={{ gaussianCount: 2048, shDegree: 3, fileSizeBytes: 1024, propertyCount: 59 }}
+        bounds={{
+          center: new Vector3(),
+          size: new Vector3(1, 1, 1),
+          radius: 0.5,
+        }}
+        kind="SPLAT"
+        error={null}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("model-canvas")).toBeInTheDocument();
+    const viewport = container.querySelector('[data-model-kind="SPLAT"]');
+    expect(viewport).not.toBeNull();
+    expect(viewport?.getAttribute("data-model-gaussians")).toBe("2048");
+    expect(viewport?.getAttribute("data-model-sh-degree")).toBe("3");
   });
 });

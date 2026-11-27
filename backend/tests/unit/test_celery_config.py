@@ -62,8 +62,19 @@ def _settings(**overrides: object) -> Settings:
 
 
 def test_the_three_documented_queues_exist() -> None:
-    assert set(ALL_QUEUES) == {"object_generation", "scene_reconstruction", "file_cleanup"}
-    assert set(GENERATION_QUEUES) == {"object_generation", "scene_reconstruction"}
+    # Increment 15 adds the dedicated neural queue; the three released queues
+    # keep their names and the mesh path still owns `scene_reconstruction`.
+    assert set(ALL_QUEUES) == {
+        "object_generation",
+        "scene_reconstruction",
+        "scene_gaussian_splat",
+        "file_cleanup",
+    }
+    assert set(GENERATION_QUEUES) == {
+        "object_generation",
+        "scene_reconstruction",
+        "scene_gaussian_splat",
+    }
     assert OBJECT_GENERATION_QUEUE == "object_generation"
     assert SCENE_RECONSTRUCTION_QUEUE == "scene_reconstruction"
     assert CLEANUP_QUEUE == "file_cleanup"

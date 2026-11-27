@@ -38,6 +38,22 @@ def gradient_image_bytes(*, size: tuple[int, int] = (1024, 768), seed: int = 0) 
     return buffer.getvalue()
 
 
+def recompressed_jpeg(data: bytes, *, scale: float = 0.6, quality: int = 60) -> bytes:
+    """Return a resized and recompressed copy of an encoded image.
+
+    The bytes differ from the original (so the SHA-256 duplicate check accepts
+    both), while the pixels remain perceptually similar.
+    """
+    with Image.open(io.BytesIO(data)) as opened:
+        opened.load()
+        width = max(1, int(opened.width * scale))
+        height = max(1, int(opened.height * scale))
+        resized = opened.convert("RGB").resize((width, height))
+    buffer = io.BytesIO()
+    resized.save(buffer, format="JPEG", quality=quality)
+    return buffer.getvalue()
+
+
 def textured_png(path: Path, size: int = 64) -> Path:
     """Write a small checkerboard texture."""
     array = np.zeros((size, size, 3), dtype=np.uint8)
@@ -67,7 +83,7 @@ def textured_quad_obj(directory: Path, *, name: str = "scene") -> Path:
     return path
 
 
-def textured_glb(path: Path) -> Path:
+def textured_glb(path: Path, *, include_normals: bool = False) -> Path:
     """Write a self-contained textured GLB built with trimesh."""
     path.parent.mkdir(parents=True, exist_ok=True)
     box = trimesh.creation.box(extents=(1.0, 1.0, 0.5))
@@ -79,7 +95,7 @@ def textured_glb(path: Path) -> Path:
     visuals = trimesh.visual.TextureVisuals(uv=uv, material=material)
     mesh = trimesh.Trimesh(vertices=box.vertices, faces=box.faces, visual=visuals, process=False)
     scene = trimesh.Scene(mesh)
-    scene.export(str(path), file_type="glb")
+    scene.export(str(path), file_type="glb", include_normals=include_normals)
     return path
 
 
