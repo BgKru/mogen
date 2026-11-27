@@ -132,4 +132,34 @@ describe("ModelInfoPanel", () => {
       `/projects/${project.id}`,
     );
   });
+
+  it("shows splat facts and a PLY download for a Gaussian result", () => {
+    const splatResult: GenerationResult = {
+      ...result,
+      format: "PLY",
+      mimeType: "application/octet-stream",
+      metadata: { representation: "GAUSSIAN_SPLAT", gaussian_count: 123_456, sh_degree: 3 },
+    };
+
+    renderWithProviders(
+      <ModelInfoPanel
+        project={project}
+        result={splatResult}
+        stats={null}
+        splatStats={{ gaussianCount: 123_456, shDegree: 3, fileSizeBytes: 512, propertyCount: 59 }}
+        latestTask={null}
+        isProcessing={false}
+      />,
+    );
+
+    expect(screen.getByText("PLY")).toBeInTheDocument();
+    expect(screen.getByText("123 456")).toBeInTheDocument();
+    expect(screen.getByText("Гауссовых точек")).toBeInTheDocument();
+    expect(screen.queryByText("Полигонов")).not.toBeInTheDocument();
+    expect(screen.getByText(/гауссовыми сплатами/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Скачать PLY" })).toHaveAttribute(
+      "href",
+      `/api/v1/projects/${project.id}/download`,
+    );
+  });
 });

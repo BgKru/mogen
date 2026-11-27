@@ -10,12 +10,15 @@ usable, self-contained glTF 2.0 binary.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from .exceptions import GLB_VALIDATION_FAILED, ExportError
 
@@ -61,6 +64,10 @@ class GLBValidation:
     bounding_box: dict[str, float]
     is_watertight: bool = False
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    has_textures: bool = False
+    has_uvs: bool = False
+    has_normals: bool = False
+    has_pbr_materials: bool = False
 
     def as_metadata(self) -> dict[str, Any]:
         """Return the JSONB-safe result metadata."""
@@ -72,7 +79,12 @@ class GLBValidation:
             "materials_count": self.materials_count,
             "textures_count": self.textures_count,
             "has_vertex_colors": self.has_vertex_colors,
+            "has_textures": self.has_textures,
+            "has_uvs": self.has_uvs,
+            "has_normals": self.has_normals,
+            "has_pbr_materials": self.has_pbr_materials,
             "bounding_box": self.bounding_box,
+            "warnings": list(self.warnings),
         }
 
 
@@ -215,6 +227,203 @@ def _accessor_min_max(accessor: dict[str, Any]) -> tuple[list[float], list[float
     return None
 
 
+def _accessor_type(
+    document: dict[str, Any],
+    accessor_index: int,
+    *,
+    expected_type: str,
+    allowed_components: frozenset[int],
+) -> int:
+    """Validate an accessor's metadata and return its element count."""
+    accessors = document.get("accessors") or []
+    if not isinstance(accessor_index, int) or not 0 <= accessor_index < len(accessors):
+        raise _invalid(f"Accessor index {accessor_index!r} is out of range.")
+    accessor = accessors[accessor_index]
+    if not isinstance(accessor, dict):
+        raise _invalid("An accessor is not an object.")
+    if accessor.get("type") != expected_type:
+        raise _invalid(f"Expected a {expected_type} accessor, got {accessor.get('type')!r}.")
+    if accessor.get("componentType") not in allowed_components:
+        raise _invalid("An accessor uses an unsupported component type.")
+    count = accessor.get("count")
+    if not isinstance(count, int) or count < 1:
+        raise _invalid("An accessor has a non-positive count.")
+    return count
+
+
+def _embedded_texture_image(document: dict[str, Any], texture_index: int | None) -> dict[str, Any]:
+    """Return the embedded image of a texture, rejecting external references."""
+    textures = document.get("textures") or []
+    images = document.get("images") or []
+    if not isinstance(texture_index, int) or not 0 <= texture_index < len(textures):
+        raise _invalid("A material references a missing texture.")
+    texture = textures[texture_index]
+    if not isinstance(texture, dict):
+        raise _invalid("A texture is not an object.")
+    source = texture.get("source")
+    if not isinstance(source, int) or not 0 <= source < len(images):
+        raise _invalid("A texture references a missing image.")
+    image = images[source]
+    if not isinstance(image, dict):
+        raise _invalid("An image is not an object.")
+    if "uri" in image:
+        raise _invalid("The GLB references an external image; it is not self-contained.")
+    view = image.get("bufferView")
+    buffer_views = document.get("bufferViews") or []
+    if not isinstance(view, int) or not 0 <= view < len(buffer_views):
+        raise _invalid("A texture image has no embedded bufferView.")
+    mime = image.get("mimeType")
+    if mime not in {"image/png", "image/jpeg", "image/webp"}:
+        raise _invalid("A texture image has an unsupported MIME type.")
+    return image
+
+
+def _primitive_material_has_texture(document: dict[str, Any], material_index: int | None) -> bool:
+    """Return whether a material carries a valid embedded base-colour texture."""
+    materials = document.get("materials") or []
+    if not isinstance(material_index, int) or not 0 <= material_index < len(materials):
+        return False
+    material = materials[material_index]
+    if not isinstance(material, dict):
+        return False
+    pbr = material.get("pbrMetallicRoughness")
+    if not isinstance(pbr, dict):
+        return False
+    base = pbr.get("baseColorTexture")
+    if not isinstance(base, dict) or "index" not in base:
+        return False
+    _embedded_texture_image(document, base.get("index"))
+    return True
+
+
+def _image_payload(document: dict[str, Any], binary_chunk: bytes, image: dict[str, Any]) -> bytes:
+    """Return the embedded image bytes and reject corrupt/empty payloads."""
+    views = document.get("bufferViews") or []
+    index = image.get("bufferView")
+    if not isinstance(index, int) or not 0 <= index < len(views):
+        raise _invalid("A texture image has no embedded bufferView.")
+    view = views[index]
+    if not isinstance(view, dict):
+        raise _invalid("A bufferView is not an object.")
+    offset = int(view.get("byteOffset", 0))
+    length = int(view.get("byteLength", 0))
+    if offset < 0 or length <= 0 or offset + length > len(binary_chunk):
+        raise _invalid("A texture image extends past the BIN chunk.")
+    payload = binary_chunk[offset : offset + length]
+    if not payload:
+        raise _invalid("A texture image is empty.")
+    try:
+        with Image.open(io.BytesIO(payload)) as opened:
+            opened.verify()
+        with Image.open(io.BytesIO(payload)) as opened:
+            width, height = opened.size
+    except Exception as exc:
+        raise _invalid("A texture image is corrupt or unreadable.") from exc
+    if width < 1 or height < 1:
+        raise _invalid("A texture image has invalid dimensions.")
+    return payload
+
+
+def _image_dimensions(
+    document: dict[str, Any], binary_chunk: bytes, image: dict[str, Any]
+) -> tuple[int, int]:
+    payload = _image_payload(document, binary_chunk, image)
+    with Image.open(io.BytesIO(payload)) as opened:
+        return int(opened.width), int(opened.height)
+
+
+def _validate_texture_slot(
+    document: dict[str, Any],
+    binary_chunk: bytes,
+    slot: Any,
+    *,
+    slot_name: str,
+    attributes: dict[str, Any],
+) -> bool:
+    """Validate a glTF textureInfo object and its embedded image."""
+    if not isinstance(slot, dict):
+        raise _invalid(f"{slot_name} is not an object.")
+    if slot_name != "baseColorTexture" and slot.get("texCoord", 0) != 0:
+        raise _invalid(f"{slot_name} references an unsupported UV set.")
+    if "TEXCOORD_0" not in attributes:
+        raise _invalid(f"{slot_name} requires TEXCOORD_0 on the primitive.")
+    image = _embedded_texture_image(document, slot.get("index"))
+    _image_payload(document, binary_chunk, image)
+    return True
+
+
+def _validate_factor(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(f"{name} must be a number.")
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise _invalid(f"{name} must be in [0, 1].")
+    return number
+
+
+def _validate_material(
+    document: dict[str, Any],
+    binary_chunk: bytes,
+    material: dict[str, Any],
+    attributes: dict[str, Any],
+) -> bool:
+    """Validate glTF metallic-roughness factors and embedded texture references."""
+    pbr = material.get("pbrMetallicRoughness")
+    if pbr is None:
+        return False
+    if not isinstance(pbr, dict):
+        raise _invalid("pbrMetallicRoughness is not an object.")
+    base = pbr.get("baseColorFactor")
+    if base is not None:
+        if not isinstance(base, list) or len(base) != 4:
+            raise _invalid("baseColorFactor must have four components.")
+        for component in base:
+            _validate_factor(component, "baseColorFactor")
+    if pbr.get("metallicFactor") is not None:
+        _validate_factor(pbr["metallicFactor"], "metallicFactor")
+    if pbr.get("roughnessFactor") is not None:
+        _validate_factor(pbr["roughnessFactor"], "roughnessFactor")
+    for slot_name in ("baseColorTexture", "metallicRoughnessTexture"):
+        slot = pbr.get(slot_name)
+        if slot is not None:
+            _validate_texture_slot(
+                document,
+                binary_chunk,
+                slot,
+                slot_name=slot_name,
+                attributes=attributes,
+            )
+    for slot_name in ("normalTexture", "occlusionTexture", "emissiveTexture"):
+        slot = material.get(slot_name)
+        if slot is not None:
+            _validate_texture_slot(
+                document,
+                binary_chunk,
+                slot,
+                slot_name=slot_name,
+                attributes=attributes,
+            )
+    if material.get("emissiveFactor") is not None:
+        emissive = material["emissiveFactor"]
+        if not isinstance(emissive, list) or len(emissive) != 3:
+            raise _invalid("emissiveFactor must have three components.")
+        for component in emissive:
+            _validate_factor(component, "emissiveFactor")
+    if material.get("normalTexture") is not None:
+        pbr_normal = material["normalTexture"]
+        if pbr_normal.get("scale") is not None:
+            value = pbr_normal["scale"]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise _invalid("normalTexture.scale must be a number.")
+            if not math.isfinite(float(value)):
+                raise _invalid("normalTexture.scale must be finite.")
+    if material.get("occlusionTexture") is not None:
+        pbr_occlusion = material["occlusionTexture"]
+        if pbr_occlusion.get("strength") is not None:
+            _validate_factor(pbr_occlusion["strength"], "occlusionTexture.strength")
+    return True
+
+
 def validate_glb_bytes(data: bytes) -> GLBValidation:
     """Validate an in-memory GLB and return its structural and geometry facts."""
     document, binary_chunk = _parse_container(data)
@@ -250,6 +459,11 @@ def validate_glb_bytes(data: bytes) -> GLBValidation:
     total_faces = 0
     primitives_count = 0
     has_vertex_colors = False
+    has_textures = False
+    has_uvs = False
+    has_normals = False
+    has_pbr_materials = False
+    max_texture_dimension = 0
     warnings: list[str] = []
 
     for mesh_index, mesh in enumerate(meshes):
@@ -309,6 +523,52 @@ def validate_glb_bytes(data: bytes) -> GLBValidation:
                     raise _invalid("COLOR_0 and POSITION accessor counts differ.")
                 has_vertex_colors = True
 
+            if "TEXCOORD_0" in attributes:
+                uv_accessor = attributes["TEXCOORD_0"]
+                uv_count = _accessor_type(
+                    document,
+                    uv_accessor,
+                    expected_type="VEC2",
+                    allowed_components=frozenset({5126, 5121, 5123}),
+                )
+                if uv_count != len(positions):
+                    raise _invalid("TEXCOORD_0 and POSITION accessor counts differ.")
+                uv_values, _ = _read_accessor_values(
+                    document,
+                    binary_chunk,
+                    uv_accessor,
+                    expected_type="VEC2",
+                )
+                coordinates = [value for pair in uv_values for value in pair]
+                if not all(math.isfinite(value) for value in coordinates):
+                    raise _invalid("TEXCOORD_0 contains non-finite coordinates.")
+                if coordinates and (min(coordinates) < -0.01 or max(coordinates) > 1.01):
+                    warnings.append("TEXCOORD_0 outside the unit square beyond padding tolerance")
+                has_uvs = True
+
+            if "NORMAL" in attributes:
+                normal_accessor = attributes["NORMAL"]
+                normal_count = _accessor_type(
+                    document,
+                    normal_accessor,
+                    expected_type="VEC3",
+                    allowed_components=frozenset({5120, 5122, 5126}),
+                )
+                if normal_count != len(positions):
+                    raise _invalid("NORMAL and POSITION accessor counts differ.")
+                normal_values, _ = _read_accessor_values(
+                    document,
+                    binary_chunk,
+                    normal_accessor,
+                    expected_type="VEC3",
+                )
+                for normal in normal_values:
+                    if not all(math.isfinite(value) for value in normal):
+                        raise _invalid("NORMAL contains non-finite vectors.")
+                    if math.sqrt(sum(value * value for value in normal)) <= 1e-9:
+                        raise _invalid("NORMAL contains a zero-length vector.")
+                has_normals = True
+
             indices = primitive.get("indices")
             if indices is None:
                 total_faces += len(positions) // 3
@@ -335,14 +595,46 @@ def validate_glb_bytes(data: bytes) -> GLBValidation:
                 not isinstance(material_index, int) or not 0 <= material_index < len(materials)
             ):
                 raise _invalid("A primitive references a missing material.")
+            if isinstance(material_index, int):
+                material = materials[material_index]
+                if not isinstance(material, dict):
+                    raise _invalid("A material is not an object.")
+                if _validate_material(
+                    document,
+                    binary_chunk,
+                    material,
+                    attributes,
+                ):
+                    has_pbr_materials = True
+                pbr = material.get("pbrMetallicRoughness")
+                base = pbr.get("baseColorTexture") if isinstance(pbr, dict) else None
+                if isinstance(base, dict):
+                    image = _embedded_texture_image(document, base.get("index"))
+                    width, height = _image_dimensions(document, binary_chunk, image)
+                    max_texture_dimension = max(max_texture_dimension, width, height)
+            if _primitive_material_has_texture(document, material_index):
+                has_textures = True
+
+    if has_vertex_colors and not has_normals:
+        warnings.append("vertex-colour asset has no NORMAL attribute")
+    if has_textures and max_texture_dimension and max_texture_dimension < 256:
+        warnings.append(f"base-colour texture is small ({max_texture_dimension}px)")
+    if total_faces > 1_000_000:
+        warnings.append("asset exceeds 1,000,000 faces")
 
     if total_vertices < 3 or total_faces < 1:
         raise _invalid("The GLB contains no usable polygon geometry.")
     extents = [highest[axis] - lowest[axis] for axis in range(3)]
     if not all(math.isfinite(extent) and extent > 1e-6 for extent in extents):
         raise _invalid("The GLB bounding box is degenerate.")
-    if not has_vertex_colors:
-        raise _invalid("The GLB has no COLOR_0 vertex colours (OBJ-AC-10).")
+    # OBJ-AC-10 requires an appearance; a textured PBR material with embedded
+    # imagery is an equally valid appearance for the optical models added by
+    # increment 13 (13 Section 5.3). A GLB with neither is still rejected.
+    if not has_vertex_colors and not (has_textures and has_uvs):
+        raise _invalid(
+            "The GLB has neither COLOR_0 vertex colours nor an embedded base-colour "
+            "texture with UVs."
+        )
 
     return GLBValidation(
         file_size_bytes=len(data),
@@ -360,6 +652,10 @@ def validate_glb_bytes(data: bytes) -> GLBValidation:
             "depth": round(extents[2], 6),
         },
         warnings=tuple(warnings),
+        has_textures=has_textures,
+        has_uvs=has_uvs,
+        has_normals=has_normals,
+        has_pbr_materials=has_pbr_materials,
     )
 
 

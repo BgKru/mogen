@@ -17,5 +17,6 @@ markers = [
     "ml: tests that exercise ML pipelines",
     "gpu: tests that require a CUDA-capable device",
     "real_model: tests that load the real TripoSR weights and run inference",
+    "real_sf3d: tests that load the pinned Stable Fast 3D weights and run inference",
     "slow: tests that take a long time to execute",
 ]

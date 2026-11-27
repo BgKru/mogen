@@ -50,8 +50,12 @@ def _seed_result(
     is_current: bool = True,
     write_file: bool = True,
     project_status: str = "COMPLETED",
+    result_format: str = "GLB",
+    mime_type: str = "model/gltf-binary",
+    filename: str | None = None,
+    metadata: dict | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, str]:
-    """Insert a completed task and one result, writing its stored GLB."""
+    """Insert a completed task and one result, writing its stored asset."""
     storage = LocalStorage(storage_root)
     with session_factory() as session:
         project = session.get(Project, project_id)
@@ -68,16 +72,18 @@ def _seed_result(
         )
         session.add(task)
         session.flush()
-        key = result_storage_key(project_id, task.id)
+        key = result_storage_key(project_id, task.id, filename=filename or "model.glb")
         result = GenerationResult(
             project_id=project_id,
             task_id=task.id,
-            format="GLB",
-            mime_type="model/gltf-binary",
+            format=result_format,
+            mime_type=mime_type,
             storage_key=key,
             file_size_bytes=len(body),
             sha256=SHA256_SAMPLE,
-            result_metadata={"vertices_count": 42, "faces_count": 80, "meshes_count": 1},
+            result_metadata=metadata
+            if metadata is not None
+            else {"vertices_count": 42, "faces_count": 80, "meshes_count": 1},
             is_current=is_current,
         )
         session.add(result)
@@ -237,3 +243,62 @@ def test_download_filename_handles_cyrillic_and_unsafe_characters(register_clien
     assert "filename*=UTF-8''" in header
     assert "%D0%9C" in header  # Cyrillic is percent-encoded, not raw
     assert header.endswith(".glb")
+
+
+def test_a_ply_result_is_served_as_a_ply_not_a_glb(
+    register_client, session_factory: sessionmaker[Session], tmp_path
+) -> None:
+    """Increment 15: a Gaussian PLY must never be mislabeled as glTF."""
+    storage_root = tmp_path / "storage"
+    client = register_client(storage_root=str(storage_root))
+    project = _create_project(client, name="Splat scene")
+    ply_bytes = b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nend_header\n"
+    metadata = {"representation": "GAUSSIAN_SPLAT", "gaussian_count": 1}
+    _seed_result(
+        session_factory,
+        storage_root,
+        uuid.UUID(project["id"]),
+        body=ply_bytes,
+        result_format="PLY",
+        mime_type="application/octet-stream",
+        filename="scene.ply",
+        metadata=metadata,
+    )
+
+    result = client.get(f"{PROJECTS_URL}/{project['id']}/result")
+    assert result.status_code == 200, result.text
+    assert result.json()["format"] == "PLY"
+    assert result.json()["mime_type"] == "application/octet-stream"
+    assert result.json()["metadata"]["representation"] == "GAUSSIAN_SPLAT"
+
+    download = client.get(f"{PROJECTS_URL}/{project['id']}/download")
+    assert download.status_code == 200, download.text
+    assert download.content == ply_bytes
+    assert download.headers["content-type"] == "application/octet-stream"
+    disposition = download.headers["content-disposition"]
+    assert 'filename="Splat_scene.ply"' in disposition
+    assert "filename*=UTF-8''Splat%20scene.ply" in disposition
+    assert ".glb" not in disposition
+
+
+def test_an_empty_mime_type_falls_back_to_the_format_mime(
+    register_client, session_factory: sessionmaker[Session], tmp_path
+) -> None:
+    storage_root = tmp_path / "storage"
+    client = register_client(storage_root=str(storage_root))
+    project = _create_project(client)
+    _seed_result(
+        session_factory,
+        storage_root,
+        uuid.UUID(project["id"]),
+        body=b"ply\n",
+        result_format="PLY",
+        mime_type="",
+        filename="scene.ply",
+    )
+
+    download = client.get(f"{PROJECTS_URL}/{project['id']}/download")
+
+    assert download.status_code == 200, download.text
+    assert download.headers["content-type"] == "application/octet-stream"
+    assert 'filename="Result_project.ply"' in download.headers["content-disposition"]

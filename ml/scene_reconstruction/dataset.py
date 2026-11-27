@@ -120,6 +120,7 @@ def workspace_paths(work_dir: Path) -> dict[str, Path]:
         "openmvs": root / "openmvs",
         "output": root / "output",
         "logs": root / "logs",
+        "diagnostics": root / "diagnostics",
     }
 
 

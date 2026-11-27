@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Object3D } from "three";
 
 import type {
+  ModelBounds,
   ModelLoadStatus,
   ModelStats,
+  SplatStats,
+  ViewerAssetKind,
   ViewerBackground,
   ViewerControlsHandle,
   ViewerLoadError,
@@ -18,6 +21,9 @@ interface ModelViewerProps {
   model: Object3D | null;
   status: ModelLoadStatus;
   stats: ModelStats | null;
+  splatStats?: SplatStats | null;
+  bounds?: ModelBounds | null;
+  kind?: ViewerAssetKind | null;
   error: ViewerLoadError | null;
   onRetry: () => void;
   className?: string;
@@ -31,15 +37,19 @@ const IDLE_CONTROLS: ViewerControlsHandle = {
 /**
  * The unified viewport for object and scene results.
  *
- * Owns only presentation state (grid, background, fullscreen); the model and
+ * Owns only presentation state (grid, background, fullscreen); the asset and
  * its lifecycle are provided by `useModelLoader`, which also disposes the
- * resources. The same component renders TripoSR objects (vertex colours) and
- * COLMAP/OpenMVS scenes (embedded textures).
+ * resources. The same component renders TripoSR/OpenMVS triangle meshes and the
+ * opt-in Gaussian-splat PLY: a splat object is not a mesh, so its bounds are
+ * measured from the PLY positions rather than a triangle bounding box.
  */
 export function ModelViewer({
   model,
   status,
   stats,
+  splatStats = null,
+  bounds: providedBounds = null,
+  kind = null,
   error,
   onRetry,
   className = "",
@@ -50,7 +60,10 @@ export function ModelViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const controller = useRef<ViewerControlsHandle>(IDLE_CONTROLS);
 
-  const bounds = useMemo(() => (model ? computeModelBounds(model) : null), [model]);
+  const bounds = useMemo(
+    () => providedBounds ?? (model ? computeModelBounds(model) : null),
+    [model, providedBounds],
+  );
 
   useEffect(() => {
     const handleChange = () => {
@@ -84,6 +97,7 @@ export function ModelViewer({
       ref={containerRef}
       className={`relative h-full w-full overflow-hidden rounded-2xl border border-border bg-background ${className}`}
       data-viewer-state={status}
+      data-model-kind={kind ?? undefined}
       data-model-meshes={stats?.meshes}
       data-model-vertices={stats?.vertices}
       data-model-triangles={stats?.triangles}
@@ -91,6 +105,8 @@ export function ModelViewer({
       data-model-textures={stats?.textures}
       data-model-textured={stats?.hasTextures}
       data-model-vertex-colors={stats?.hasVertexColors}
+      data-model-gaussians={splatStats?.gaussianCount}
+      data-model-sh-degree={splatStats?.shDegree}
     >
       {loaded && model && bounds ? (
         <ModelCanvas

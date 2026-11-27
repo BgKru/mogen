@@ -33,6 +33,9 @@ REQUIRED_TOOLS: tuple[str, ...] = (
     "TextureMesh",
     "TransformScene",
 )
+# The neural scene representation only needs the COLMAP sparse stage; OpenMVS
+# is never invoked for a Gaussian-splat task (15 Section 4.1).
+REQUIRED_COLMAP_TOOLS: tuple[str, ...] = ("colmap",)
 
 # OpenMVS prints its help and exits; COLMAP returns 0 for --help. A non-zero
 # help exit is tolerated only when the process actually produced output.
@@ -53,10 +56,12 @@ class ToolchainReport:
     """The result of verifying every required external tool."""
 
     tools: tuple[ToolInfo, ...] = field(default_factory=tuple)
+    required: tuple[str, ...] = REQUIRED_TOOLS
 
     @property
     def verified(self) -> bool:
-        return len(self.tools) == len(REQUIRED_TOOLS)
+        names = {tool.name for tool in self.tools}
+        return names == set(self.required)
 
     def as_dict(self) -> dict[str, str]:
         return {tool.name: tool.version for tool in self.tools}
@@ -82,13 +87,16 @@ def _version_line(name: str, output: str) -> str:
 
 
 def verify_toolchain(
-    config: SceneConfig, *, timeout: int = _HELP_TIMEOUT_SECONDS
+    config: SceneConfig, *, timeout: int = _HELP_TIMEOUT_SECONDS, include_openmvs: bool = True
 ) -> ToolchainReport:
     """Verify that every required executable exists and can start.
 
     Raises :class:`ToolError` with ``EXTERNAL_TOOL_UNAVAILABLE`` for the first
     missing or non-runnable tool; SCENE-AC-01 requires detection at startup.
+    ``include_openmvs=False`` is used by the neural representation, which only
+    depends on COLMAP.
     """
+    required = REQUIRED_TOOLS if include_openmvs else REQUIRED_COLMAP_TOOLS
     verified: list[ToolInfo] = []
     # OpenMVS writes a `<tool>-<timestamp>.log` file next to its working
     # directory on every start, including `--help`. Probes therefore run in a
@@ -96,7 +104,7 @@ def verify_toolchain(
     # in the worker's CWD (and a host-side run pollutes the source tree)
     # (07 Section 15.7).
     with tempfile.TemporaryDirectory(prefix="mogen-toolcheck-") as scratch:
-        for name in REQUIRED_TOOLS:
+        for name in required:
             path = config.tool(name)
             if not path.is_file() or not (path.stat().st_mode & 0o111):
                 raise ToolError(
@@ -121,7 +129,7 @@ def verify_toolchain(
                     EXTERNAL_TOOL_UNAVAILABLE, "A required reconstruction tool could not start."
                 )
             verified.append(ToolInfo(name=name, path=path, version=_version_line(name, output)))
-    return ToolchainReport(tools=tuple(verified))
+    return ToolchainReport(tools=tuple(verified), required=required)
 
 
 def check_disk_space(work_dir: Path, *, min_free_bytes: int) -> int:
@@ -156,6 +164,7 @@ def check_dataset(dataset: SceneDataset, config: SceneConfig) -> None:
 
 
 __all__ = [
+    "REQUIRED_COLMAP_TOOLS",
     "REQUIRED_TOOLS",
     "ToolInfo",
     "ToolchainReport",

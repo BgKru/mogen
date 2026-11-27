@@ -89,14 +89,18 @@ mogen/
   images.
 - GPU deployment: NVIDIA GPU, compatible driver and NVIDIA Container Toolkit.
   The base stack runs CPU-only; `compose.gpu.yaml` reserves the GPU for both ML
-  workers.
+  workers. On a GPU host, set `COMPOSE_FILE=compose.yaml;compose.gpu.yaml` in
+  `.env` (`:` instead of `;` on Linux/macOS) so every `docker compose` command
+  includes the overlay, or pass `-f compose.yaml -f compose.gpu.yaml`
+  explicitly. CUDA is then mandatory for the object worker: a worker asked for
+  CUDA never silently falls back to CPU.
 
 ## Development quick start
 
 ```bash
 cp .env.example .env
 docker compose config -q
-docker compose up -d --build          # add -f compose.gpu.yaml for GPU
+docker compose up -d --build          # GPU host: see COMPOSE_FILE above
 ```
 
 The `migration` service applies the schema and exits 0; `model-init` populates

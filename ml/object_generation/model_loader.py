@@ -204,6 +204,14 @@ def get_model(config: ObjectGenerationConfig) -> ModelLoadResult:
         return cached
 
 
+def release_model(config: ObjectGenerationConfig) -> None:
+    """Drop the cached model for this configuration and release device memory."""
+    key = (str(config.model_dir.resolve()), config.device)
+    with _model_lock:
+        _model_cache.pop(key, None)
+    cleanup_gpu()
+
+
 def warm_up(config: ObjectGenerationConfig) -> ModelLoadResult:
     """Initialize the model during worker startup (OBJ-AC-01/02/03)."""
     result = get_model(config)

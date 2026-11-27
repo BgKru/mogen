@@ -354,12 +354,22 @@ def test_a_long_pipeline_is_heartbeated_automatically(
     observed: dict[str, datetime | None] = {}
 
     def _pipeline(context) -> None:
-        observed["claimed"] = context.task.heartbeat_at
-        time.sleep(1.3)
-        with session_factory() as probe:
-            observed["later"] = probe.scalar(
-                select(GenerationTask.heartbeat_at).where(GenerationTask.id == task.id)
-            )
+        claimed = context.task.heartbeat_at
+        observed["claimed"] = claimed
+        # Poll with a bounded deadline instead of sleeping for one fixed
+        # interval: the heartbeat runs on another thread, so a busy CI host can
+        # schedule it a little late without meaning the monitor is broken.
+        deadline = time.monotonic() + 15.0
+        later = claimed
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            with session_factory() as probe:
+                later = probe.scalar(
+                    select(GenerationTask.heartbeat_at).where(GenerationTask.id == task.id)
+                )
+            if claimed is not None and later is not None and later > claimed:
+                break
+        observed["later"] = later
 
     outcome = run_generation(
         settings=settings,

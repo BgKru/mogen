@@ -53,11 +53,16 @@ class TaskStatus(StrEnum):
 
 
 class ResultFormat(StrEnum):
-    """Asset formats the schema permits (Section 11.2)."""
+    """Asset formats the schema permits (Section 11.2).
+
+    ``PLY`` was added by increment 15 for the opt-in Gaussian-splat
+    representation; it is not a mesh and is never served as ``GLB``.
+    """
 
     GLB = "GLB"
     OBJ = "OBJ"
     STL = "STL"
+    PLY = "PLY"
 
 
 class CleanupTargetType(StrEnum):

@@ -303,7 +303,47 @@ usage line in the cleanup-worker logs.
 
 ---
 
-## 9. Security notes
+## 9. Optional neural scene representation (increment 15)
+
+The default stack builds and runs the released COLMAP + OpenMVS mesh path. The
+Gaussian-splat representation is an opt-in overlay that requires a dedicated
+worker image and a GPU:
+
+```bash
+docker compose build scene-worker
+docker compose -f compose.yaml -f compose.gpu.yaml -f compose.splat.yaml up -d --build
+docker compose -f compose.yaml -f compose.gpu.yaml -f compose.splat.yaml ps -a
+```
+
+The overlay sets `SCENE_REPRESENTATION=gaussian_splat`,
+`SCENE_SPLAT_ENABLED=true` and `SCENE_OUTPUT_FORMAT=PLY` on the API and adds
+`splat-worker` on the `scene_gaussian_splat` queue. The base scene worker keeps
+consuming mesh tasks; each worker registers one capability and rejects tasks
+persisted for the other representation (`SCENE_WORKER_INCOMPATIBLE`). Because the
+representation is persisted with the task, rolling back to the mesh overlay does
+not re-target already accepted splat tasks; stop the splat worker only after its
+queue drains.
+
+Operational notes:
+
+- The neural stack lives in `/opt/splat-site` (isolated from the
+  COLMAP/OpenMVS Python environment) and the gsplat CUDA kernels are compiled
+  into the image at build time. A rebuild with a different torch/gsplat pin
+  recompiles them; the build fails if the kernels cannot be built.
+- The worker reserves one GPU and runs one task at a time. The admission check
+  refuses a task when less free VRAM than `SCENE_SPLAT_MAX_VRAM_MB` (soft budget)
+  is available; OOM/timeout are recorded as stable `SPLAT_*` codes.
+- Training checkpoints stay in `/data/work/scene/{task_id}` and follow the
+  existing workspace retention policy. Only the validated `.ply` and compact
+  metadata are registered.
+- The API image and the object worker import no Nerfstudio/gsplat package.
+- A PLY result is downloaded as `application/octet-stream` with a `.ply`
+  filename; the viewer lazy-loads the Gaussian-splat renderer and reports the
+  Gaussian count instead of triangle statistics.
+
+---
+
+## 10. Security notes
 
 - Only nginx is published; the API trusts proxy headers only because nginx is
   the sole reachable peer (`--forwarded-allow-ips=*` inside the internal
@@ -324,7 +364,7 @@ usage line in the cleanup-worker logs.
 
 ---
 
-## 10. Deployment verification checklist (roadmap 10.2)
+## 11. Deployment verification checklist (roadmap 10.2)
 
 | Check | Command / evidence |
 |---|---|

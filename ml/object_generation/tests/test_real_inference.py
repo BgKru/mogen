@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 import pytest
+
 from object_generation.config import ObjectGenerationConfig
 from object_generation.pipeline import run_object_generation
 

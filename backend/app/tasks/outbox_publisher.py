@@ -23,6 +23,7 @@ from app.db.models import OutboxMessage
 from app.db.models.enums import CleanupTargetType, OutboxEventType, TaskType
 from app.services.outbox_events import OUTBOX_SCHEMA_VERSION
 from app.services.outbox_service import PermanentDispatchError
+from app.services.scene_methods import GAUSSIAN_SPLAT, persisted_representation
 from app.tasks.celery_app import (
     CLEANUP_QUEUE,
     CLEANUP_TASK_NAME,
@@ -30,6 +31,7 @@ from app.tasks.celery_app import (
     OBJECT_GENERATION_TASK,
     SCENE_RECONSTRUCTION_QUEUE,
     SCENE_RECONSTRUCTION_TASK,
+    SCENE_SPLAT_QUEUE,
 )
 
 
@@ -56,8 +58,15 @@ def _identifier(payload: dict[str, object], field: str, event_type: str) -> str:
     return value
 
 
-def resolve_dispatch_target(message: OutboxMessage) -> DispatchTarget:
-    """Map one outbox message onto its queue and Celery task."""
+def resolve_dispatch_target(
+    message: OutboxMessage, *, splat_queue: str = SCENE_SPLAT_QUEUE
+) -> DispatchTarget:
+    """Map one outbox message onto its queue and Celery task.
+
+    A scene task is routed by its persisted representation. A message written
+    before increment 15 (or by an object task) has no representation and keeps
+    the released ``scene_reconstruction`` queue.
+    """
     if message.schema_version != OUTBOX_SCHEMA_VERSION:
         raise PermanentDispatchError(f"unsupported outbox schema_version {message.schema_version}")
     payload = message.payload or {}
@@ -69,7 +78,21 @@ def resolve_dispatch_target(message: OutboxMessage) -> DispatchTarget:
         if task_type == TaskType.OBJECT.value:
             task_name, queue = OBJECT_GENERATION_TASK, OBJECT_GENERATION_QUEUE
         elif task_type == TaskType.SCENE.value:
-            task_name, queue = SCENE_RECONSTRUCTION_TASK, SCENE_RECONSTRUCTION_QUEUE
+            raw_representation = payload.get("representation")
+            try:
+                representation = persisted_representation(
+                    {"representation": raw_representation}
+                    if raw_representation is not None
+                    else None
+                )
+            except ValueError as exc:
+                raise PermanentDispatchError(str(exc)) from exc
+            task_name = SCENE_RECONSTRUCTION_TASK
+            queue = (
+                splat_queue
+                if representation.value == GAUSSIAN_SPLAT
+                else SCENE_RECONSTRUCTION_QUEUE
+            )
         else:
             raise PermanentDispatchError(
                 f"generation.requested payload has an unknown task_type {task_type!r}"
@@ -118,7 +141,9 @@ class CeleryPublisher:
         The dispatcher owns retries through the outbox row, so ``retry=False``
         keeps a failure visible to it instead of being retried invisibly.
         """
-        target = resolve_dispatch_target(message)
+        configured = getattr(getattr(self._app, "conf", None), "mogen_scene_splat_queue", None)
+        splat_queue = configured or SCENE_SPLAT_QUEUE
+        target = resolve_dispatch_target(message, splat_queue=splat_queue)
         self._app.send_task(
             target.task_name,
             args=list(target.args),

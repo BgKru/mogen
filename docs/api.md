@@ -78,7 +78,15 @@ same key and fingerprint returns the existing task with `200`.
 | Method | Path | Success | Notes |
 |---|---|---|---|
 | GET | `/api/v1/projects/{id}/result` | `200` Result | Current validated result only: `id`, `project_id`, `task_id`, `format`, `mime_type`, `file_size_bytes`, `metadata`, `is_current`, `created_at`; `404 RESULT_NOT_FOUND` |
-| GET | `/api/v1/projects/{id}/download` | `200` GLB | `model/gltf-binary`, 64 KiB chunks, safe `Content-Disposition`, `private, no-store`, `nosniff`, `Content-Length`; `404 RESULT_FILE_MISSING`, `503 STORAGE_UNAVAILABLE` |
+| GET | `/api/v1/projects/{id}/download` | `200` asset | GLB as `model/gltf-binary` or Gaussian PLY as `application/octet-stream`; the filename extension follows `format` (`.glb`/`.ply`); 64 KiB chunks, safe `Content-Disposition`, `private, no-store`, `nosniff`, `Content-Length`; `404 RESULT_FILE_MISSING`, `503 STORAGE_UNAVAILABLE` |
 
 A failed regeneration preserves the previous current result. Ownership is
 enforced on every result and download request; foreign resources return `404`.
+
+Scene results use the representation persisted in the task:
+
+* `MESH` (default) → `format=GLB`, `mime_type=model/gltf-binary`;
+* `GAUSSIAN_SPLAT` (opt-in) → `format=PLY`,
+  `mime_type=application/octet-stream`, and result metadata carries
+  `representation=GAUSSIAN_SPLAT`, the Gaussian count, PLY schema/size and the
+  training facts. A PLY is never served as glTF and never under a `.glb` name.

@@ -32,6 +32,36 @@ STREAM_CHUNK_SIZE = 64 * 1024
 _DOWNLOAD_NAME_MAX = 80
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
+# One extension and MIME type per result format. GLB keeps the released
+# ``model/gltf-binary`` contract; the Gaussian-splat PLY is an opaque binary
+# artifact and is explicitly *not* served as glTF (15 Section 5.5).
+DOWNLOAD_EXTENSIONS: dict[str, str] = {
+    "GLB": ".glb",
+    "OBJ": ".obj",
+    "STL": ".stl",
+    "PLY": ".ply",
+}
+RESULT_MIME_TYPES: dict[str, str] = {
+    "GLB": "model/gltf-binary",
+    "OBJ": "text/plain",
+    "STL": "model/stl",
+    "PLY": "application/octet-stream",
+}
+DEFAULT_RESULT_MIME_TYPE = "model/gltf-binary"
+DEFAULT_DOWNLOAD_EXTENSION = ".glb"
+
+
+def download_extension(result_format: str | None) -> str:
+    """Return the download suffix for a result format, GLB when unknown."""
+    return DOWNLOAD_EXTENSIONS.get(
+        (result_format or "GLB").strip().upper(), DEFAULT_DOWNLOAD_EXTENSION
+    )
+
+
+def result_mime_type(result_format: str | None) -> str:
+    """Return the MIME type implied by a result format."""
+    return RESULT_MIME_TYPES.get((result_format or "GLB").strip().upper(), DEFAULT_RESULT_MIME_TYPE)
+
 
 def result_storage_key(
     project_id: uuid.UUID, task_id: uuid.UUID, *, filename: str = "model.glb"
@@ -56,14 +86,17 @@ def ascii_download_name(project_name: str) -> str:
     return cleaned[:_DOWNLOAD_NAME_MAX]
 
 
-def content_disposition(project_name: str) -> str:
+def content_disposition(project_name: str, *, extension: str = ".glb") -> str:
     """Build a safe ``attachment`` header with an RFC 5987 Unicode name.
 
     The ASCII fallback is always present for legacy clients; the UTF-8 variant
-    preserves the user's project name without allowing header injection.
+    preserves the user's project name without allowing header injection. The
+    extension is derived from the result format, so a Gaussian PLY never
+    downloads under a ``.glb`` name.
     """
-    full_name = f"{project_name.strip() or 'model'}.glb"
-    fallback = f"{ascii_download_name(project_name)}.glb"
+    suffix = extension if extension.startswith(".") else f".{extension}"
+    full_name = f"{project_name.strip() or 'model'}{suffix}"
+    fallback = f"{ascii_download_name(project_name)}{suffix}"
     encoded = quote(full_name, safe="")
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
 
@@ -124,7 +157,7 @@ class ResultService:
 
 
 def stream_result(stream: BinaryIO):
-    """Yield a GLB in bounded chunks and always close the handle."""
+    """Yield a GLB or PLY in bounded chunks and always close the handle."""
     try:
         while chunk := stream.read(STREAM_CHUNK_SIZE):
             yield chunk

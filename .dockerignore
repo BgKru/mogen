@@ -22,6 +22,10 @@ ml/object_generation/viewer/node_modules
 ml/object_generation/viewer
 ml/scene_reconstruction/.pytest_cache
 ml/scene_reconstruction/.ruff_cache
+ml/image_quality/.pytest_cache
+ml/image_quality/.ruff_cache
+ml/mesh_enhancement/.pytest_cache
+ml/mesh_enhancement/.ruff_cache
 # OpenMVS writes a <tool>-<timestamp>.log next to its working directory; a
 # host-side tool probe used to leave these in the package directory.
 ml/scene_reconstruction/*.log

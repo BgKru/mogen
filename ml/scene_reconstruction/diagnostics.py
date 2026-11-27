@@ -38,6 +38,34 @@ class ReconstructionDiagnostics:
     glb: SceneGLBValidation | None = None
     raw_export: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # Advisory image-quality report (11_image_quality_analysis.md Section 8.1).
+    # ``None`` when the analyzer is disabled; a dict with an explicit status
+    # when the analyzer failed in advisory mode.
+    image_quality: dict[str, Any] | None = None
+    image_quality_seconds: float | None = None
+    # Optional feature backend (12_advanced_feature_matching.md Sections 7-9).
+    # Only compact metrics are persisted; descriptors, tensors, command lines
+    # and absolute paths never reach result metadata.
+    feature_backend: str = ""
+    feature_profile: str = ""
+    feature_actual_backend: str = ""
+    feature_fallback_used: bool = False
+    feature_fallback_reason: str | None = None
+    feature_versions: dict[str, str] = field(default_factory=dict)
+    feature_extraction: dict[str, Any] | None = None
+    feature_matching: dict[str, Any] | None = None
+    # Optional post-reconstruction enhancement (14 Section 7). ``None`` when it
+    # is disabled; compact operations/counts only, never paths or tensors.
+    enhancement: dict[str, Any] | None = None
+    # Optional neural representation (15 Section 5.3/9). ``representation`` is
+    # always set; the remaining fields are ``None`` for a mesh reconstruction.
+    representation: str = "MESH"
+    method: str = "COLMAP_OPENMVS"
+    splat_dataset: dict[str, Any] | None = None
+    splat_training: dict[str, Any] | None = None
+    splat_runtime: dict[str, Any] | None = None
+    splat_device: dict[str, Any] | None = None
+    splat_artifact: dict[str, Any] | None = None
     stage_timings: dict[str, float] = field(default_factory=dict)
     total_seconds: float = 0.0
 
@@ -79,8 +107,41 @@ class ReconstructionDiagnostics:
             "raw_export": dict(self.raw_export),
             "glb_validation": self.glb.as_metadata() if self.glb else None,
             "warnings": sorted(set(self.warnings)),
+            "image_quality": self.image_quality,
+            "image_quality_seconds": (
+                round(self.image_quality_seconds, 3)
+                if self.image_quality_seconds is not None
+                else None
+            ),
+            "features": {
+                "requested_backend": self.feature_backend,
+                "requested_profile": self.feature_profile,
+                "backend": self.feature_actual_backend or self.feature_backend,
+                "profile": self.feature_profile,
+                "fallback": {
+                    "used": self.feature_fallback_used,
+                    "reason": self.feature_fallback_reason,
+                },
+                "versions": dict(self.feature_versions),
+                "extraction": self.feature_extraction,
+                "matching": self.feature_matching,
+            },
             "stage_seconds": dict(self.stage_timings),
             "total_seconds": round(self.total_seconds, 3),
+            "enhancement": self.enhancement,
+            "representation": self.representation,
+            "method": self.method,
+            "splat": (
+                {
+                    "dataset": self.splat_dataset,
+                    "training": self.splat_training,
+                    "runtime": self.splat_runtime,
+                    "device": self.splat_device,
+                    "artifact": self.splat_artifact,
+                }
+                if self.representation == "GAUSSIAN_SPLAT"
+                else None
+            ),
         }
         return metadata
 

@@ -204,6 +204,21 @@ def test_downgrade_removes_the_schema_and_upgrade_restores_it(
     assert restored >= EXPECTED_TABLES
 
 
+def test_the_result_format_constraint_accepts_ply_and_keeps_legacy_values(engine: Engine) -> None:
+    """Increment 15: the CHECK constraint is extended, never narrowed."""
+    definition = _constraint_definitions(engine)["ck_generation_results_format"]
+
+    for value in ("'GLB'", "'OBJ'", "'STL'", "'PLY'"):
+        assert value in definition
+    # The migration only replaces the constraint; the column stays unchanged.
+    column = next(
+        column
+        for column in inspect(engine).get_columns("generation_results")
+        if column["name"] == "format"
+    )
+    assert column["nullable"] is False
+
+
 def test_alembic_check_reports_no_model_drift(schema_at_head: str, migration_alembic) -> None:
     """The committed migration is in sync with the ORM metadata."""
     result = migration_alembic(["check"], schema_at_head)

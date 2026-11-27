@@ -243,12 +243,39 @@ COPY backend/app ./app
 COPY ml/scene_reconstruction/requirements.txt /opt/scene_reconstruction-requirements.txt
 RUN /opt/venv/bin/python -m pip install -r /opt/scene_reconstruction-requirements.txt
 
+# Optional neural feature matching (12_advanced_feature_matching.md). These
+# dependencies live only in the scene worker; SIFT remains the default. git is
+# needed only to install the pinned LightGlue commit and is purged in the same
+# layer, so the runtime image does not carry a VCS client.
+COPY ml/scene_reconstruction/requirements-neural.txt /opt/scene-neural-requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && /opt/venv/bin/python -m pip install --no-cache-dir \
+        -r /opt/scene-neural-requirements.txt \
+    && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps \
+        "lightglue @ git+https://github.com/cvg/LightGlue@5a650c444718caffc2669dc0094cde908f42dd73" \
+    && apt-get purge -y --auto-remove git \
+    && rm -rf /var/lib/apt/lists/*
+
 # The pipeline package is imported as `scene_reconstruction`, so /opt is the
 # parent that must be on PYTHONPATH.
 COPY ml/scene_reconstruction /opt/scene_reconstruction
+# Shared image-quality analyzer (11_image_quality_analysis.md). Imported as
+# `image_quality`; it is the same package the object worker installs.
+COPY ml/image_quality /opt/image_quality
+# Shared mesh-enhancement utilities (14_mesh_texture_enhancement.md). Imported
+# as `mesh_enhancement`; it is the same package the object worker installs.
+COPY ml/mesh_enhancement /opt/mesh_enhancement
+
+# Bake the pinned ALIKED/LightGlue checkpoints into the image (the worker is
+# offline at task time) and fail the build when a checksum does not match.
+ENV TORCH_HOME=/opt/neural_models
+RUN /opt/venv/bin/python /opt/scene_reconstruction/download_neural_models.py \
+    && /opt/venv/bin/python /opt/scene_reconstruction/download_neural_models.py --verify-only \
+    && chown -R ubuntu:ubuntu /opt/neural_models
 
 RUN mkdir -p /data/work/scene \
-    && chown -R ubuntu:ubuntu /app /data /opt/scene_reconstruction
+    && chown -R ubuntu:ubuntu /app /data /opt/scene_reconstruction /opt/image_quality /opt/mesh_enhancement
 
 USER ubuntu
 

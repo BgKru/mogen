@@ -1,0 +1,94 @@
+# Dedicated neural scene worker (increment 15): Nerfstudio Splatfacto + gsplat.
+#
+# This image intentionally layers on the verified scene-worker image because the
+# splat path must reuse the same COLMAP 4.2.1 sparse reconstruction and the
+# pycolmap/trimesh runtime. The neural stack itself is isolated in
+# /opt/splat-site (installed with --no-deps) and is put on PYTHONPATH only for
+# the controlled training/export subprocess, so the worker process and the
+# COLMAP/OpenMVS environment keep their verified dependency set.
+#
+# Build order matters: `mogen-scene-worker:dev` must exist first.
+#   docker compose build scene-worker
+#   docker build -f ml/scene_reconstruction/Dockerfile.splat -t mogen-splat-worker:dev .
+ARG SCENE_BASE_IMAGE=mogen-scene-worker:dev
+FROM ${SCENE_BASE_IMAGE}
+
+USER root
+ENV DEBIAN_FRONTEND=noninteractive
+# gsplat's JIT build needs a host compiler for nvcc; the runtime scene image
+# deliberately does not carry a toolchain.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential python3.12-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV SPLAT_SITE=/opt/splat-site \
+    CUDA_HOME=/opt/splat-site/nvidia/cu13 \
+    TORCH_CUDA_ARCH_LIST=8.6 \
+    TORCH_EXTENSIONS_DIR=/opt/splat-cache/torch_extensions \
+    TORCH_HOME=/opt/splat-cache/torch_home \
+    LD_LIBRARY_PATH=/opt/splat-site/nvidia/cu13/lib \
+    PATH=/opt/splat-site/nvidia/cu13/bin:/opt/splat-site/bin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+
+COPY ml/scene_reconstruction/requirements-splat.txt /tmp/requirements-splat.txt
+RUN /opt/venv/bin/pip install --no-cache-dir --no-deps --upgrade --target /opt/splat-site \
+        -r /tmp/requirements-splat.txt \
+    && /opt/venv/bin/pip check \
+    && ln -sf libcudart.so.13 /opt/splat-site/nvidia/cu13/lib/libcudart.so
+
+# Splatfacto constructs the LPIPS metric at model init; its AlexNet backbone
+# weights are downloaded on first construction. Bake them into the image so the
+# offline worker never reaches the network during a task.
+RUN mkdir -p /opt/splat-cache/torch_home \
+    && cd /opt \
+    && PYTHONPATH=/opt/splat-site:/opt TORCH_HOME=/opt/splat-cache/torch_home \
+        /opt/venv/bin/python - <<'PY'
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+
+metric = LearnedPerceptualImagePatchSimilarity(normalize=True)
+import sklearn
+
+print("lpips backbone ready:", type(metric.net).__name__, "sklearn", sklearn.__version__)
+PY
+
+# gsplat compiles its CUDA kernels on first use; do that at build time so a user
+# task never spends minutes in the compiler and cannot fail on a missing nvcc.
+# MAX_JOBS is bounded so the build does not exhaust a shared dev host's memory.
+RUN mkdir -p /opt/splat-cache/torch_extensions \
+    && cd /opt \
+    && MAX_JOBS=3 PYTHONPATH=/opt/splat-site:/opt /opt/venv/bin/python - <<'PY'
+import gsplat.cuda._backend as backend
+from gsplat.rendering import rasterization
+from nerfstudio.engine.trainer import TrainerConfig
+from nerfstudio.models.splatfacto import SplatfactoModelConfig
+from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
+
+assert backend._C is not None, "gsplat CUDA extension was not compiled"
+print("splat runtime imports and gsplat kernels are ready")
+PY
+
+# Application sources are copied after the neural runtime layers so a source
+# change rebuilds only this layer, not the CUDA compile. The base image predates
+# increment 15; the shared packages are copied again so the image cannot drift
+# from the source tree.
+COPY ml/image_quality /opt/image_quality
+COPY ml/mesh_enhancement /opt/mesh_enhancement
+COPY ml/scene_reconstruction /opt/scene_reconstruction
+COPY backend /app
+
+# Package directories are installed by root with the default 0755/0644 mode, so
+# the unprivileged worker can read them without a recursive chmod (which is very
+# slow on a large CUDA cache and unnecessary here). The compiled kernel cache is
+# read-only at task time; gsplat loads the baked `gsplat_cuda.so` directly.
+# The worker process keeps the released environment; the neural site directory is
+# added by NerfstudioRunner for the training subprocess only.
+ENV PYTHONPATH=/app:/opt \
+    SCENE_SPLAT_WORKER=true \
+    SCENE_REPRESENTATION=gaussian_splat \
+    SCENE_SPLAT_ENABLED=true \
+    SCENE_OUTPUT_FORMAT=PLY \
+    WORKER_SERVICE_NAME=splat-worker \
+    TEXTURE_ENHANCEMENT_DEVICE=cpu \
+    MESH_ENHANCEMENT_MAX_MEMORY_MB=8192
+
+USER ubuntu
+CMD ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--queues=scene_gaussian_splat", "--pool=solo", "--include=app.tasks.scene_pipeline"]

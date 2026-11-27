@@ -14,7 +14,7 @@ import shutil
 import signal
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,11 +79,14 @@ class CommandRunner:
         timeout: int,
         log_path: Path,
         on_poll: Callable[[], None] | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandOutcome:
         """Execute ``command``; raise on timeout, cancellation or a missing tool.
 
         A non-zero exit code is *returned*, not raised: the caller maps it to the
-        stage-specific error code in the specification.
+        stage-specific error code in the specification. ``env`` replaces the
+        inherited environment only for callers that must pin runtime paths (the
+        neural worker's Torch extension cache); ``None`` keeps the worker's own.
         """
         if not command:
             raise ToolError(EXTERNAL_TOOL_UNAVAILABLE, "No command was supplied.")
@@ -104,6 +107,7 @@ class CommandRunner:
                     stderr=subprocess.STDOUT,
                     text=True,
                     start_new_session=True,
+                    env=dict(env) if env is not None else None,
                 )
             except OSError as exc:
                 raise ToolError(

@@ -30,6 +30,8 @@ class MeshStats:
     bounding_box: dict[str, float]
     has_vertex_colors: bool
     is_watertight: bool
+    has_textures: bool = False
+    has_uvs: bool = False
 
     def as_metadata(self) -> dict[str, Any]:
         """Return the JSONB-safe subset stored with the result."""
@@ -39,6 +41,8 @@ class MeshStats:
             "meshes_count": 1,
             "bounding_box": self.bounding_box,
             "has_vertex_colors": self.has_vertex_colors,
+            "has_textures": self.has_textures,
+            "has_uvs": self.has_uvs,
             "watertight": self.is_watertight,
         }
 
@@ -95,6 +99,14 @@ def validate_mesh(mesh: Any) -> MeshStats:
         has_colors = mesh.visual is not None and mesh.visual.kind in {"vertex", "face"}
     except Exception:
         has_colors = False
+    try:
+        kind = getattr(mesh.visual, "kind", None)
+        has_textures = kind == "texture" and getattr(mesh.visual, "material", None) is not None
+        uv = getattr(mesh.visual, "uv", None)
+        has_uvs = has_textures and uv is not None and len(uv) == int(vertices.shape[0])
+    except Exception:
+        has_textures = False
+        has_uvs = False
 
     # A missing normal cache is fine: the GLB exporter writes the geometry and
     # Three.js computes normals when they are absent (06 Section 9.5).
@@ -113,6 +125,8 @@ def validate_mesh(mesh: Any) -> MeshStats:
         },
         has_vertex_colors=has_colors,
         is_watertight=watertight,
+        has_textures=has_textures,
+        has_uvs=has_uvs,
     )
     logger.info(
         "mesh_validated",

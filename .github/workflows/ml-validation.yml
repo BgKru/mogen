@@ -36,6 +36,11 @@ jobs:
           mogen-object-worker:ci
           python -m pytest /opt/object_generation/tests -q
 
+      - name: Shared image-quality unit tests
+        run: >-
+          docker run --rm mogen-object-worker:ci
+          python -m pytest /opt/image_quality/tests -q
+
       - name: Populate the pinned model cache
         run: |
           docker volume create mogen_triposr_model_cache_ci
@@ -70,6 +75,11 @@ jobs:
           docker run --rm -v "${{ github.workspace }}/ml:/work/ml"
           mogen-scene-worker:ci
           python -m pytest /opt/scene_reconstruction/tests -q
+
+      - name: Shared image-quality unit tests
+        run: >-
+          docker run --rm mogen-scene-worker:ci
+          python -m pytest /opt/image_quality/tests -q
 
       - name: Verify the toolchain
         run: >-

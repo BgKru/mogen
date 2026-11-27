@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
+from image_quality import ImageQualityConfig
 
 from scene_reconstruction import pipeline as pipeline_module
 from scene_reconstruction.colmap_runner import StageOutcome, read_database_stats
 from scene_reconstruction.dataset import SourceImage
 from scene_reconstruction.exceptions import (
+    IMAGE_DECODE_FAILED,
+    QUALITY_ANALYSIS_FAILED,
     TEXTURE_GENERATION_FAILED,
+    DatasetError,
     SceneCancelled,
     SceneReconstructionError,
 )
@@ -24,6 +30,7 @@ from .helpers import (
     create_colmap_database,
     default_config,
     gradient_image_bytes,
+    recompressed_jpeg,
     textured_png,
     textured_quad_obj,
     write_mesh_ply,
@@ -303,10 +310,182 @@ def test_disabling_refinement_and_texturing_still_exports_the_mesh(tmp_path, mon
     assert artifact.path.is_file()
 
 
-def test_artifact_metadata_is_json_serialisable(tmp_path, monkeypatch):
-    import json
+def test_corrupt_input_is_rejected_before_quality_analysis(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
 
+    def should_not_run(*_args, **_kwargs):
+        raise AssertionError("the analyzer must not see a corrupt upload")
+
+    monkeypatch.setattr(pipeline_module, "analyze_images", should_not_run)
+    sources = [
+        SourceImage.from_bytes(b"not an image", filename="broken.jpg", image_id="broken"),
+        *_sources(4),
+    ]
+
+    with pytest.raises(DatasetError) as excinfo:
+        _reconstructor(colmap, openmvs).reconstruct(sources, work_dir=tmp_path / "task")
+
+    assert excinfo.value.error_code == IMAGE_DECODE_FAILED
+    assert calls == []
+
+
+def test_artifact_metadata_is_json_serialisable(tmp_path, monkeypatch):
     calls: list[str] = []
     colmap, openmvs = _install_fakes(monkeypatch, calls)
     artifact = _reconstructor(colmap, openmvs).reconstruct(_sources(), work_dir=tmp_path / "task")
     json.dumps(artifact.metadata)
+
+
+# -- advisory image-quality analysis (11_image_quality_analysis.md) ----------
+
+
+def _quality_reconstructor(colmap, openmvs, quality: ImageQualityConfig):
+    config = default_config(
+        min_registered_images=3,
+        min_sparse_points=10,
+        image_quality=quality,
+    )
+    return PhotogrammetryReconstructor(config, colmap=colmap, openmvs=openmvs)
+
+
+def test_quality_analysis_runs_after_dataset_preparation_and_before_colmap(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
+    work_dir = tmp_path / "task"
+    observed: dict[str, object] = {}
+    real_analyze = pipeline_module.analyze_images
+
+    def spy(items, *, config, on_progress=None):
+        prepared = list(items)
+        observed["filenames"] = [item.filename for item in prepared]
+        observed["workspace"] = sorted(path.name for path in (work_dir / "images").iterdir())
+        calls.append("QUALITY")
+        return real_analyze(prepared, config=config, on_progress=on_progress)
+
+    monkeypatch.setattr(pipeline_module, "analyze_images", spy)
+    artifact = _quality_reconstructor(colmap, openmvs, ImageQualityConfig()).reconstruct(
+        _sources(), work_dir=work_dir
+    )
+
+    assert calls[0] == "QUALITY"
+    assert "FEATURE_EXTRACTION" in calls
+    assert observed["workspace"] == [
+        "image_001.jpg",
+        "image_002.jpg",
+        "image_003.jpg",
+        "image_004.jpg",
+        "image_005.jpg",
+    ]
+    assert observed["filenames"] == [f"photo_{index}.jpg" for index in range(1, 6)]
+    assert artifact.metadata["image_quality"]["status"] == "OK"
+
+
+def test_scene_quality_findings_are_included_in_diagnostics(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
+    quality = ImageQualityConfig(contrast_threshold=1000.0)
+
+    artifact = _quality_reconstructor(colmap, openmvs, quality).reconstruct(
+        _sources(), work_dir=tmp_path / "task"
+    )
+
+    document = artifact.metadata["image_quality"]
+    assert document["status"] == "OK"
+    assert len(document["images"]) == 5
+    assert document["images"][0]["findings"]
+    codes = {finding["code"] for finding in document["images"][0]["findings"]}
+    assert "LOW_CONTRAST" in codes
+    assert document["duplicate_codes"]["exact"] == "EXACT_DUPLICATE"
+    assert document["duplicate_codes"]["near"] == "POSSIBLE_NEAR_DUPLICATE"
+    report_path = tmp_path / "task" / "diagnostics" / "image_quality.json"
+    assert report_path.is_file()
+    stored = json.loads(report_path.read_text(encoding="utf-8"))
+    assert stored["analyzer"]["version"] == document["analyzer"]["version"]
+    assert stored["images"] == document["images"]
+
+
+def test_near_duplicate_findings_do_not_remove_images_or_block_colmap(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
+    base = gradient_image_bytes(seed=1)
+    sources = [
+        SourceImage.from_bytes(base, filename="photo_1.jpg", image_id="1"),
+        SourceImage.from_bytes(recompressed_jpeg(base), filename="photo_2.jpg", image_id="2"),
+        SourceImage.from_bytes(gradient_image_bytes(seed=2), filename="photo_3.jpg", image_id="3"),
+        SourceImage.from_bytes(gradient_image_bytes(seed=3), filename="photo_4.jpg", image_id="4"),
+    ]
+
+    artifact = _quality_reconstructor(colmap, openmvs, ImageQualityConfig()).reconstruct(
+        sources, work_dir=tmp_path / "task"
+    )
+
+    document = artifact.metadata["image_quality"]
+    assert document["near_duplicates"]["pair_count"] >= 1
+    assert artifact.metadata["unique_images"] == 4
+    assert len(document["images"]) == 4
+    assert len(list((tmp_path / "task" / "images").iterdir())) == 4
+    assert "FEATURE_EXTRACTION" in calls
+    duplicate_codes = {
+        finding["code"] for image in document["images"] for finding in image["findings"]
+    }
+    assert "POSSIBLE_NEAR_DUPLICATE" in duplicate_codes
+
+
+def test_disabling_quality_analysis_preserves_the_previous_behaviour(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
+
+    artifact = _quality_reconstructor(
+        colmap, openmvs, ImageQualityConfig(enabled=False)
+    ).reconstruct(_sources(), work_dir=tmp_path / "task")
+
+    assert artifact.metadata["image_quality"] is None
+    assert artifact.metadata["image_quality_seconds"] is None
+    assert not (tmp_path / "task" / "diagnostics" / "image_quality.json").exists()
+    assert "FEATURE_EXTRACTION" in calls
+
+
+def test_advisory_quality_failure_is_recorded_and_reconstruction_continues(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("analyzer crashed")
+
+    monkeypatch.setattr(pipeline_module, "analyze_images", broken)
+
+    artifact = _quality_reconstructor(colmap, openmvs, ImageQualityConfig()).reconstruct(
+        _sources(), work_dir=tmp_path / "task"
+    )
+
+    document = artifact.metadata["image_quality"]
+    assert document == {
+        "status": "UNAVAILABLE",
+        "error_code": "QUALITY_ANALYSIS_UNAVAILABLE",
+    }
+    assert "QUALITY_ANALYSIS_UNAVAILABLE" in artifact.metadata["warnings"]
+    assert "FEATURE_EXTRACTION" in calls
+    assert artifact.path.is_file()
+
+
+def test_required_quality_failure_stops_before_colmap(tmp_path, monkeypatch):
+    calls: list[str] = []
+    colmap, openmvs = _install_fakes(monkeypatch, calls)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("analyzer crashed")
+
+    monkeypatch.setattr(pipeline_module, "analyze_images", broken)
+    quality = ImageQualityConfig(required=True)
+
+    with pytest.raises(SceneReconstructionError) as excinfo:
+        _quality_reconstructor(colmap, openmvs, quality).reconstruct(
+            _sources(), work_dir=tmp_path / "task"
+        )
+
+    assert excinfo.value.error_code == QUALITY_ANALYSIS_FAILED
+    assert calls == []
+    assert not (tmp_path / "task" / "diagnostics" / "image_quality.json").exists()
+    diagnostics = (tmp_path / "task" / "diagnostics.json").read_text(encoding="utf-8")
+    assert QUALITY_ANALYSIS_FAILED in diagnostics

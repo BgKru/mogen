@@ -8,11 +8,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 import trimesh
+
 from object_generation.exceptions import ExportError, MeshError
 from object_generation.exporter import export_glb
 from object_generation.mesh_processor import validate_mesh
 from object_generation.validator import validate_glb
-
 from tests.helpers import colored_box
 
 
@@ -76,15 +76,17 @@ def test_export_glb_produces_a_valid_self_contained_asset(tmp_path: Path) -> Non
     assert validate_glb(path).sha256 == validation.sha256
 
 
-def test_export_rejects_a_mesh_without_vertex_colours(tmp_path: Path) -> None:
+def test_export_rejects_a_mesh_without_any_appearance(tmp_path: Path) -> None:
     mesh = trimesh.creation.box(extents=(1, 1, 1))
-    mesh.visual = trimesh.visual.texture.TextureVisuals()  # no vertex colours
+    mesh.visual = trimesh.visual.texture.TextureVisuals()  # no colours, no texture
     path = tmp_path / "model.glb"
 
     with pytest.raises(ExportError) as excinfo:
         export_glb(mesh, path)
 
-    assert excinfo.value.error_code == "GLB_EXPORT_FAILED"
+    # Increment 13 accepts a textured material as appearance, so the rejection
+    # code is now generator-neutral; a mesh with neither appearance still fails.
+    assert excinfo.value.error_code == "UNSUPPORTED_MESH_OUTPUT"
     assert not path.exists()
 
 

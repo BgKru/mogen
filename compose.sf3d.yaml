@@ -1,0 +1,57 @@
+# Opt-in Stable Fast 3D object worker (increment 13).
+#
+# This overlay replaces the single `object_generation` worker policy: it builds
+# the worker from the `sf3d` Dockerfile target, points it at the SF3D cache and
+# runs a one-shot initializer that populates and verifies that cache. Only one
+# generator policy may own the queue, so do not run this overlay at the same
+# time as a second object worker configured for TripoSR.
+#
+#   $env:HF_TOKEN = "<read token for the gated SF3D repository>"
+#   docker compose -f compose.yaml -f compose.gpu.yaml -f compose.sf3d.yaml up -d --build object-worker sf3d-model-init
+#
+# The default `docker compose -f compose.yaml -f compose.gpu.yaml up` stack is
+# untouched and keeps TripoSR.
+
+x-sf3d-build: &sf3d-build
+  context: .
+  dockerfile: ml/object_generation/Dockerfile
+  target: sf3d
+
+services:
+  object-worker:
+    build: *sf3d-build
+    image: mogen-object-worker:sf3d
+    environment:
+      OBJECT_GENERATOR: sf3d
+      OBJECT_GENERATOR_FALLBACK: ${OBJECT_GENERATOR_FALLBACK:-false}
+      OBJECT_SF3D_ENABLED: "true"
+      OBJECT_SF3D_MODEL_ID: ${OBJECT_SF3D_MODEL_ID:-stabilityai/stable-fast-3d}
+      OBJECT_SF3D_MODEL_REVISION: ${OBJECT_SF3D_MODEL_REVISION:-f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778}
+      OBJECT_SF3D_MODEL_DIR: /models/sf3d
+      OBJECT_SF3D_MANIFEST_PATH: /models/sf3d/model-manifest.json
+      OBJECT_SF3D_TEXTURE_RESOLUTION: ${OBJECT_SF3D_TEXTURE_RESOLUTION:-1024}
+      OBJECT_SF3D_REMESH: ${OBJECT_SF3D_REMESH:-none}
+      OBJECT_SF3D_TARGET_VERTEX_COUNT: ${OBJECT_SF3D_TARGET_VERTEX_COUNT:--1}
+      # The isolated SF3D dependency directory comes before site-packages.
+      PYTHONPATH: /opt/sf3d-site:/opt/sf3d-src:/app:/opt/triposr:/opt
+    depends_on:
+      sf3d-model-init:
+        condition: service_completed_successfully
+
+  sf3d-model-init:
+    build: *sf3d-build
+    image: mogen-object-worker:sf3d
+    restart: "no"
+    command: ["python", "-m", "object_generation.sf3d.download_models"]
+    environment:
+      OBJECT_SF3D_MODEL_ID: ${OBJECT_SF3D_MODEL_ID:-stabilityai/stable-fast-3d}
+      OBJECT_SF3D_MODEL_REVISION: ${OBJECT_SF3D_MODEL_REVISION:-f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778}
+      OBJECT_SF3D_MODEL_DIR: /models/sf3d
+      OBJECT_SF3D_MANIFEST_PATH: /models/sf3d/model-manifest.json
+      OBJECT_SF3D_FORCE_DOWNLOAD: ${OBJECT_SF3D_FORCE_DOWNLOAD:-false}
+      HF_TOKEN: ${HF_TOKEN:-}
+      PYTHONPATH: /opt/sf3d-site:/opt/sf3d-src:/app:/opt/triposr:/opt
+    volumes:
+      - triposr_model_cache:/models
+    networks:
+      - internal

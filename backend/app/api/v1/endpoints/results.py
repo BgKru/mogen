@@ -19,6 +19,8 @@ from app.schemas.result import GenerationResultResponse
 from app.services.result_service import (
     ResultService,
     content_disposition,
+    download_extension,
+    result_mime_type,
     stream_result,
 )
 
@@ -60,17 +62,25 @@ def download_current_result(
     user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ResultService, Depends(get_result_service)],
 ) -> StreamingResponse:
-    """Stream the current GLB with the documented attachment headers."""
+    """Stream the current asset with format-correct headers.
+
+    A GLB is served exactly as before. A Gaussian-splat PLY is served as
+    ``application/octet-stream`` with a ``.ply`` filename; it is never
+    mislabeled as glTF or downloaded under a ``.glb`` name (15 Section 5.5).
+    """
     download = service.open_download(user_id=user.id, project_id=project_id)
+    media_type = download.result.mime_type or result_mime_type(download.result.format)
     headers = {
-        "Content-Type": download.result.mime_type or "model/gltf-binary",
-        "Content-Disposition": content_disposition(download.project.name),
+        "Content-Type": media_type,
+        "Content-Disposition": content_disposition(
+            download.project.name, extension=download_extension(download.result.format)
+        ),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Length": str(download.result.file_size_bytes),
     }
     return StreamingResponse(
         stream_result(download.stream),
-        media_type=download.result.mime_type or "model/gltf-binary",
+        media_type=media_type,
         headers=headers,
     )

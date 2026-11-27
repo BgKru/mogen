@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
 from object_generation.exceptions import ExportError
 from object_generation.validator import (
     GLBValidation,
@@ -15,7 +16,6 @@ from object_generation.validator import (
     validate_glb,
     validate_glb_bytes,
 )
-
 from tests.helpers import JSON_CHUNK, build_glb_bytes
 
 
@@ -151,4 +151,66 @@ def test_missing_primitive_attributes_are_rejected() -> None:
 def test_a_material_index_must_resolve() -> None:
     document, binary, _ = _split(build_glb_bytes())
     document["meshes"][0]["primitives"][0]["material"] = 3
+    _expect_invalid(_rebuild(document, binary))
+
+
+# -- increment 14: normals, UVs, PBR and embedded images --------------------
+
+
+def test_normals_are_validated_when_present() -> None:
+    result = validate_glb_bytes(build_glb_bytes(include_normals=True))
+    assert result.has_normals is True
+
+    zero = np.zeros((4, 3), dtype=np.float32)
+    _expect_invalid(build_glb_bytes(include_normals=True, normals=zero))
+
+    nan = np.full((4, 3), np.nan, dtype=np.float32)
+    _expect_invalid(build_glb_bytes(include_normals=True, normals=nan))
+
+
+def test_a_legacy_vertex_colour_asset_without_normals_still_passes() -> None:
+    result = validate_glb_bytes(build_glb_bytes(include_normals=False))
+    assert result.has_normals is False
+    assert "vertex-colour asset has no NORMAL attribute" in result.warnings
+
+
+def _export_textured(tmp_path: Path) -> tuple[dict, bytes]:
+    from object_generation.exporter import export_glb
+    from tests.helpers import textured_box
+
+    path = tmp_path / "textured.glb"
+    export_glb(textured_box(), path)
+    return _split(path.read_bytes())
+
+
+def test_a_textured_primitive_requires_texture_coordinates(tmp_path: Path) -> None:
+    document, binary, _ = _export_textured(tmp_path)
+    del document["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"]
+    _expect_invalid(_rebuild(document, binary))
+
+
+def test_metallic_roughness_factors_must_be_in_range(tmp_path: Path) -> None:
+    document, binary, _ = _export_textured(tmp_path)
+    document["materials"][0]["pbrMetallicRoughness"]["metallicFactor"] = 2.0
+    _expect_invalid(_rebuild(document, binary))
+
+    document, binary, _ = _export_textured(tmp_path)
+    document["materials"][0]["pbrMetallicRoughness"]["roughnessFactor"] = -0.5
+    _expect_invalid(_rebuild(document, binary))
+
+
+def test_a_texture_image_must_be_embedded_and_readable(tmp_path: Path) -> None:
+    document, binary, _ = _export_textured(tmp_path)
+    document["images"][0]["uri"] = "sidecar.png"
+    _expect_invalid(_rebuild(document, binary))
+
+    document, binary, _ = _export_textured(tmp_path)
+    # Point the image bufferView at an empty range.
+    document["bufferViews"][document["images"][0]["bufferView"]]["byteLength"] = 0
+    _expect_invalid(_rebuild(document, binary))
+
+
+def test_an_emissive_texture_requires_a_valid_reference(tmp_path: Path) -> None:
+    document, binary, _ = _export_textured(tmp_path)
+    document["materials"][0]["emissiveTexture"] = {"index": 99}
     _expect_invalid(_rebuild(document, binary))
